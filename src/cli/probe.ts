@@ -6,14 +6,15 @@
  * Read-only commands never write to the kettle except the documented hello/poll; state-changing
  * commands require --yes. Run `cosori-probe help` for usage.
  */
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 
-import { NodeBleTransport, resolveDbusAddress, type WriteMode } from '../ble/NodeBleTransport.js';
+import { NodeBleTransport, resolveDbusAddress, type ScanResult, type WriteMode } from '../ble/NodeBleTransport.js';
 import { InvalidRegistrationKeyError, NotInPairingModeError } from '../kettle/errors.js';
 import { describeCompletion, KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
 import {
-  ADVERTISED_NAME, generateKey, keyFromHelloPackets, keyToHex, MAX_HOLD_SECONDS, Mode, MODE_NAMES, parseKey,
+  ADVERTISED_NAME, ETEKCITY_COMPANY_ID, findHandshakesInLog, generateKey, keyFromHelloPackets, keyToHex, MAX_HOLD_SECONDS, Mode, MODE_NAMES, parseKey,
   PRESET_TEMP_F, ProtocolVersion, STAGE_NAMES, toHex,
 } from '../protocol/index.js';
 import { delay, errorMessage } from '../util/async.js';
@@ -27,8 +28,9 @@ Usage: cosori-probe <command> [args] [options]
 Read-only:
   scan                         Scan for BLE devices (Cosori kettles highlighted; --all shows everything)
   info <mac>                   Connect, read device info / firmware, detect protocol version, show GATT flags
+  key-from-log <file>          Find the VeSync app's registration key in a PacketLogger text export (offline)
   key-from-packets <p1> <p2> <p3>
-                               Recover the registration key from the 3 hello writes captured from the VeSync app
+                               Recover the key from the 3 hello writes, pasted as hex (offline)
   status <mac>                 Hello with --key, poll once, print decoded status
   watch <mac>                  Hello with --key, poll every --interval seconds and print live status (Ctrl-C to stop)
 
@@ -234,19 +236,26 @@ async function reportAfterWrite(client: KettleClient, before: KettleStatus, log:
   log.info(`After:  ${formatStatus(after)}`);
 }
 
+function looksLikeKettle(r: ScanResult): boolean {
+  return r.manufacturerIds.includes(ETEKCITY_COMPANY_ID) || !!r.name?.toLowerCase().includes('cosori');
+}
+
 async function cmdScan(flags: Flags, log: Logger): Promise<void> {
   const durationMs = parseNumber(flags.duration ?? '10', '--duration', 1, 120) * 1000;
   log.info(`Scanning for ${durationMs / 1000}s…`);
   const results = await NodeBleTransport.scan({ dbusAddress: flags.dbus ?? 'auto', adapter: flags.adapter, durationMs, log });
-  const kettles = results.filter((r) => r.name?.toLowerCase().includes('cosori'));
-  const shown = flags.all ? results : kettles;
-  for (const r of shown.sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999))) {
-    const star = r.name?.toLowerCase().includes('cosori') ? '★ ' : '  ';
-    console.log(`${star}${r.address}  rssi=${r.rssi ?? '?'}  name=${r.name ?? '(none)'}`);
+  const kettles = results.filter(looksLikeKettle);
+  const shown = (flags.all ? results : kettles).sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999));
+  for (const r of shown) {
+    const star = looksLikeKettle(r) ? '★ ' : '  ';
+    const mfr = r.manufacturerIds.length ? `  mfr=${r.manufacturerIds.map((id) => `0x${id.toString(16).padStart(4, '0')}`).join(',')}` : '';
+    console.log(`${star}${r.address}  rssi=${r.rssi ?? '?'}  name=${r.name ?? '(none)'}${mfr}`);
   }
   if (kettles.length === 0) {
-    log.warn(`No device named like "${ADVERTISED_NAME}" found (${results.length} devices seen). `
-      + 'Close the VeSync app (the kettle stops advertising while connected) and try again, or use --all.');
+    log.warn(`No kettle found (${results.length} devices seen). A kettle advertises as "${ADVERTISED_NAME}" with Etekcity manufacturer data. `
+      + 'Make sure the VeSync app is closed and the kettle is in range (the Pi 4 onboard radio is weak in metal cases); try --all.');
+  } else {
+    log.info(`${kettles.length} kettle(s) found. Weak signal (below about -85 dBm) means connections may be unreliable.`);
   }
 }
 
@@ -265,6 +274,47 @@ function cmdKeyFromPackets(packets: string[]): void {
   const key = keyFromHelloPackets(packets);
   console.log(`Registration key: ${keyToHex(key)}`);
   console.log('Next: cosori-probe status <mac> --key ' + keyToHex(key));
+}
+
+function cmdKeyFromLog(file: string | undefined): void {
+  if (!file) {
+    throw new UsageError('pass the path of a PacketLogger text export (File → Export… as text)');
+  }
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new UsageError(`cannot read ${file}: ${errorMessage(err)}`);
+  }
+  if (text.slice(0, 4096).includes('\u0000')) {
+    throw new UsageError(`${file} looks binary (a .pklg file?). In PacketLogger use File → Export… and save as text.`);
+  }
+  const result = findHandshakesInLog(text);
+  console.log(`Scanned ${result.writeLines} ATT write line(s) and ${result.notifyLines} notification line(s).`);
+  if (result.handshakes.length === 0) {
+    const why = result.writeLines === 0
+      ? 'No "ATT Send … Write Request" lines with raw hex bytes were found. Check the export includes the raw packet bytes, '
+        + 'and that the trace covers the moment the VeSync app connected to the kettle.'
+      : 'Writes were found but none formed a valid hello/register frame. The capture may have started after the app connected: '
+        + 'force-quit the app, start a new trace, then open the app again.';
+    throw new Error(`no registration handshake found. ${why}`);
+  }
+  const unique = new Map<string, typeof result.handshakes[number]>();
+  for (const h of result.handshakes) {
+    unique.set(keyToHex(h.key), h);
+  }
+  for (const [key, h] of unique) {
+    const verdict = h.ackStatus === undefined
+      ? 'kettle reply not in the log (key not yet confirmed — test it with `status`)'
+      : h.ackStatus === 0
+        ? 'kettle ACCEPTED it (status 00)'
+        : `kettle REJECTED it (status 0x${h.ackStatus.toString(16).padStart(2, '0')})`;
+    console.log(`\n${h.command === 'hello' ? 'Hello' : 'Register'} (protocol V${h.protocolVersion}, seq ${h.seq}) → ${verdict}`);
+    console.log(`Registration key: ${key}`);
+  }
+  if (unique.size > 1) {
+    console.log('\nMore than one key was found; use the one the kettle accepted.');
+  }
 }
 
 async function cmdStatus(mac: string, flags: Flags, log: Logger): Promise<void> {
@@ -463,6 +513,9 @@ async function main(argv: string[]): Promise<number> {
       break;
     case 'key-from-packets':
       cmdKeyFromPackets(args);
+      break;
+    case 'key-from-log':
+      cmdKeyFromLog(args[0]);
       break;
     case 'status':
       await cmdStatus(requireMac(args[0]), flags, log);

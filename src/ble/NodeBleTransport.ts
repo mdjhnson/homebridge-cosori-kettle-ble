@@ -40,6 +40,8 @@ export interface ScanResult {
   address: string;
   name?: string;
   rssi?: number;
+  /** Company identifiers present in the advertised manufacturer data. */
+  manufacturerIds: number[];
 }
 
 /** Resolve the D-Bus address option to a concrete address (or undefined for the library default). */
@@ -375,9 +377,7 @@ export class NodeBleTransport extends EventEmitter implements KettleTransport {
       }
       const startedHere = await startDiscoverySafe(adapter);
       await delay(options.durationMs ?? 10_000);
-      if (startedHere) {
-        await stopDiscoverySafe(adapter);
-      }
+      // Read properties while discovery is still running: BlueZ drops RSSI once it stops.
       const results: ScanResult[] = [];
       for (const address of await adapter.devices()) {
         const device = await adapter.getDevice(address).catch(() => undefined);
@@ -387,7 +387,16 @@ export class NodeBleTransport extends EventEmitter implements KettleTransport {
         const name = await device.getName().catch(() => undefined);
         const rssiRaw = await device.getRSSI().catch(() => undefined);
         const rssi = rssiRaw === undefined ? undefined : Number(rssiRaw);
-        results.push({ address, name, rssi: Number.isFinite(rssi) ? rssi : undefined });
+        const manufacturer = await device.getManufacturerData().catch(() => undefined);
+        results.push({
+          address,
+          name,
+          rssi: Number.isFinite(rssi) ? rssi : undefined,
+          manufacturerIds: manufacturer ? Object.keys(manufacturer).map(Number).filter(Number.isFinite) : [],
+        });
+      }
+      if (startedHere) {
+        await stopDiscoverySafe(adapter);
       }
       return results;
     } finally {

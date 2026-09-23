@@ -185,3 +185,26 @@ export const BAD_CHECKSUM_FRAMES = [
   { name: 'PROTOCOL.md 0x20 "start" frame', hex: 'a5:20:5f:0c:00:2e:01:41:40:00:01:00:d4:00:00:00:00:00' },
   { name: 'PROTOCOL.md 0x20 "stop" frame', hex: 'a5:20:60:0c:00:2f:01:41:40:00:00:00:d4:00:00:00:00:00' },
 ];
+
+/**
+ * PacketLogger text-export lines around a VeSync-app connection. The first line is verbatim from
+ * barrymichels' HANDSHAKE_EXTRACTION_GUIDE.md; the others use the same layout with the HCI ACL +
+ * L2CAP + ATT header bytes computed for each value (values are the guide's captured packets / ACK).
+ * Note the truncated "Value:" column ("…") — the raw bytes at the end of the line are complete.
+ */
+export const PACKETLOGGER_EXPORT = [
+  'Jan 04 08:02:40.512  HCI Event        0x0405  00:00:00:00:00:00  LE Meta Event - LE Connection Complete',
+  'Jan 04 08:02:40.700  ATT Receive      0x0405  00:00:00:00:00:00  Read Response - Value: 436F 736F …  05 04 0B 00 07 00 04 00 0B 43 6F 73 6F 72 69',
+  'Jan 04 08:02:40.876  ATT Send         0x0405  00:00:00:00:00:00  Write Request - Handle:0x000E - Value: A522 0424 002E 0181 D100 3766 3836 3839…  '
+    + '05 04 1B 00 17 00 04 00 12 0E 00 A5 22 04 24 00 2E 01 81 D1 00 37 66 38 36 38 39 36 32 63 64',
+  'Jan 04 08:02:40.890  ATT Receive      0x0405  00:00:00:00:00:00  Write Response  05 04 05 00 01 00 04 00 13',
+  'Jan 04 08:02:40.920  ATT Send         0x0405  00:00:00:00:00:00  Write Request - Handle:0x000E - Value: 6530 3536 6236 3062 3534 3033 3433 3361…  '
+    + '05 04 1B 00 17 00 04 00 12 0E 00 65 30 35 36 62 36 30 62 35 34 30 33 34 33 33 61 64 34 32 62',
+  'Jan 04 08:02:40.981  ATT Send         0x0405  00:00:00:00:00:00  Write Request - Handle:0x000E - Value: 6463  05 04 09 00 05 00 04 00 12 0E 00 64 63',
+  'Jan 04 08:02:41.040  ATT Receive      0x0405  00:00:00:00:00:00  Handle Value Notification - Handle:0x0010 - Value: A512 0405 00EC 0181 D100 00  '
+    + '05 04 12 00 0E 00 04 00 1B 10 00 A5 12 04 05 00 EC 01 81 D1 00 00',
+  'Jan 04 08:02:41.100  ATT Send         0x0405  00:00:00:00:00:00  Write Request - Handle:0x000E - Value: A522 4104 0072 0140 4000  '
+    + '05 04 11 00 0D 00 04 00 12 0E 00 A5 22 41 04 00 72 01 40 40 00',
+  'Jan 04 08:02:51.209  ATT Receive      0x0405  00:00:00:00:00:00  Handle Value Notification - Handle:0x0010 - Value: A522 6A0C 00E7 0141 4000 0000 B4A5…  '
+    + '05 04 19 00 15 00 04 00 1B 10 00 A5 22 6A 0C 00 E7 01 41 40 00 00 00 B4 A5 00 00 00 00',
+].join('\n');

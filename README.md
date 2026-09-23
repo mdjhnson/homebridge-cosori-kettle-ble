@@ -57,6 +57,10 @@ bluetoothctl power on
 - **Do not pair or trust the kettle in `bluetoothctl`.** The kettle uses its own application-level registration, not BLE bonding.
 - **No D-Bus policy file is needed** when the container runs as root (the default for `homebridge/homebridge`): BlueZ's stock policy (`/etc/dbus-1/system.d/bluetooth.conf`) already allows root. If you run the container rootless or with user-namespace remapping, install a policy for that user as described in the [node-ble README](https://github.com/chrvadala/node-ble#provide-permissions).
 - **Pi 4 radio coexistence:** the onboard chip shares its antenna between 2.4 GHz Wi-Fi and Bluetooth. If connections are flaky, put the Pi on Ethernet or 5 GHz Wi-Fi.
+- **Metal cases and USB 3 devices:** aluminium cases such as the Argon ONE shield the onboard antenna, and USB 3 drives and hubs emit noise in the 2.4 GHz band. In testing, a Pi 4 in an Argon ONE with a USB 3 SSD could not hear anything weaker than about -80 dBm, and could not see the kettle at 3 m.
+  - **Fix:** a USB Bluetooth 5.x adapter with a Realtek **RTL8761BU** chip (e.g. TP-Link UB500, ASUS USB-BT500). Its firmware ships in Raspberry Pi OS's `firmware-realtek` package.
+  - Put it on a **USB 2.0 port and a short extension cable**, outside the case and away from USB 3 devices.
+  - It appears as `hci1`; pass `--adapter hci1`, or disable the onboard radio with `dtoverlay=disable-bt` in `/boot/firmware/config.txt` so the adapter becomes the default.
 
 ## Docker changes
 
@@ -129,32 +133,47 @@ The kettle only accepts commands from a client that sends a known **16-byte regi
 
 ### Option A — reuse the VeSync app's key (recommended)
 
-Reusing the app's key keeps the VeSync app working with the kettle. You capture the hello the app sends when it connects, then extract the key with `cosori-probe key-from-packets`.
+Reusing the app's key keeps the VeSync app working with the kettle. You record a Bluetooth trace while the app connects, and the probe finds the key in that trace.
 
 **iPhone (with a Mac):**
 
-1. On the iPhone, install Apple's **Bluetooth logging profile** from [developer.apple.com/bug-reporting/profiles-and-logs](https://developer.apple.com/bug-reporting/profiles-and-logs/) (search "Bluetooth"), and reboot as instructed.
-2. On the Mac, install **PacketLogger** (in *Additional Tools for Xcode*, from [developer.apple.com/download/all](https://developer.apple.com/download/all/)).
-3. Connect the iPhone by cable, open PacketLogger → *File → New iOS Trace*.
-4. Open the VeSync app and connect to the kettle.
-5. In PacketLogger, find three consecutive **ATT Write Request/Command** packets to the kettle: the first value starts with `A5 22 xx 24 00` and is 20 bytes, the second is 20 bytes, and the third is 2 bytes.
-6. Copy the three **values** (the bytes starting at `A5`; if you copy the whole ATT PDU, the probe skips the prefix).
+1. **Install Apple's Bluetooth logging profile on the iPhone.**
+   - Go to [developer.apple.com/bug-reporting/profiles-and-logs](https://developer.apple.com/bug-reporting/profiles-and-logs/) (a free Apple ID works), find **Bluetooth** for iOS, and download the profile.
+   - Install it under *Settings → General → VPN & Device Management*, then restart the iPhone.
+   - The profile expires after a few days. You can remove it once you have the key.
+2. **Install PacketLogger on the Mac.** Download **Additional Tools for Xcode** from [developer.apple.com/download/all](https://developer.apple.com/download/all/); PacketLogger is in the `Hardware` folder of the disk image.
+3. **Force-quit the VeSync app** so its next connection, and the key it sends, is captured from the start. Also make sure nothing else is connected to the kettle; the probe disconnects when it exits.
+4. **Plug the iPhone into the Mac, unlock it and tap *Trust*.** In PacketLogger, choose *File → New iOS Trace*. Packets start scrolling.
+5. **Open the VeSync app and open the kettle** until it shows the live temperature.
+6. **Stop the trace, then export it as text** (*File → Export…*, choosing a text format).
+7. **Run the probe on the export.** On the Mac, from a clone of this repo after `npm install`, run `node dist/cli/probe.js key-from-log ~/Desktop/kettle.txt`; on the Pi, run `cosori-probe key-from-log …`:
+
+   ```
+   Hello (protocol V1, seq 4) → kettle ACCEPTED it (status 00)
+   Registration key: 7f868962cde056b60b5403433ad42bdc
+   ```
+
+   It finds the three hello writes on its own, strips PacketLogger's per-packet headers, checks the frame checksum, and reads the kettle's reply to confirm the key was accepted.
+
+**Picking the packets by hand (optional).** The handshake is three consecutive *ATT Send → Write Request, Handle 0x000E* packets, sent right after connecting:
+- the first value starts `A5 22 xx 24 00` and is 20 bytes
+- the second is 20 bytes
+- the third is 2 bytes
+
+The kettle then answers with a notification on handle 0x0010 starting `A5 12 xx 05 00 … 01 81 D1 00`, where a final `00` means accepted.
+
+- ⚠️ **PacketLogger's "Value:" column is cut off with "…".** Copy the **raw hex bytes** at the end of each line instead. Those include an 11-byte header (`05 04 1B 00 17 00 04 00 12 0E 00`), which the probe removes for you.
+- Then run `cosori-probe key-from-packets "<raw 1>" "<raw 2>" "<raw 3>"`.
 
 **Android:**
 
-1. *Settings → Developer options → Enable Bluetooth HCI snoop log*, then toggle Bluetooth off and on.
-2. Open the VeSync app and connect to the kettle.
-3. `adb bugreport bugreport.zip`, then extract `FS/data/misc/bluetooth/logs/btsnoop_hci.log` (the path varies by vendor).
-4. Open it in Wireshark with the filter `btatt.opcode == 0x12 || btatt.opcode == 0x52`, and find the three consecutive writes described in step 5 above.
+1. *Settings → Developer options → Enable Bluetooth HCI snoop log*, then turn Bluetooth off and on.
+2. Force-quit the VeSync app, reopen it and open the kettle.
+3. Run `adb bugreport bugreport.zip` and extract `FS/data/misc/bluetooth/logs/btsnoop_hci.log` (the path varies by vendor).
+4. Open the log in Wireshark and filter with `btatt.opcode == 0x12 || btatt.opcode == 0x52`. Find the three writes described above and copy each **value** as hex (*Copy → …as Hex Stream*).
+5. Run `cosori-probe key-from-packets <v1> <v2> <v3>`.
 
-Then, anywhere the package is installed:
-
-```sh
-cosori-probe key-from-packets "A5 22 04 24 00 2E 01 81 D1 00 37 66 …" "65 30 35 …" "64 63"
-# → Registration key: 7f868962cde056b60b5403433ad42bdc
-```
-
-The probe verifies the frame checksum, so a mistyped or reordered packet is rejected rather than producing a wrong key.
+**Keep the key private.** Anyone within Bluetooth range who has it can control the kettle.
 
 ### Option B — pair as a new client
 
@@ -174,9 +193,10 @@ docker exec -it homebridge cosori-probe <command> [args] [options]
 
 | Command | Writes to kettle? | Purpose |
 |---|---|---|
-| `scan [--all] [--duration 10]` | no | List nearby kettles (and their MAC addresses) |
+| `scan [--all] [--duration 10]` | no | List nearby kettles, matched by name or Etekcity manufacturer ID, with MAC and RSSI |
 | `info <mac>` | no | Connect, read model/firmware (Device Information Service), detect protocol version, show GATT flags |
-| `key-from-packets <p1> <p2> <p3>` | — (offline) | Extract the registration key from a captured app hello |
+| `key-from-log <file>` | — (offline) | Find and verify the app's key in a PacketLogger text export |
+| `key-from-packets <p1> <p2> <p3>` | — (offline) | Extract the key from the three hello writes, pasted as hex |
 | `status <mac> --key K` | hello + poll | Verify the key, print one decoded status |
 | `watch <mac> --key K [--interval 2]` | hello + polls | Live status until Ctrl-C |
 | `pair <mac> --yes` | register | Register a new key (hold MyBrew) |
@@ -215,7 +235,7 @@ The plugin will offer an **on-demand** connection mode that connects briefly for
 | `BlueZ adapter lookup … timed out` / `org.bluez was not provided` | `bluetoothd` isn't running on the host: `sudo systemctl enable --now bluetooth`. |
 | `adapter is powered off` | `sudo rfkill unblock bluetooth && bluetoothctl power on` on the host. |
 | `AccessDenied` | The container isn't running as root, or AppArmor is blocking it. See [Host setup](#host-setup-raspberry-pi--debian) and the `security_opt` row in [Docker changes](#docker-changes). |
-| `not found while scanning` | The kettle is out of range or unpowered, or the VeSync app is connected to it. |
+| `not found while scanning` / `scan` finds nothing | The kettle is out of range or unpowered, or the VeSync app is connected to it. **Raspberry Pi 4 in a metal case (e.g. Argon ONE):** the onboard antenna is heavily shielded and may not hear the kettle even at 3 m. Use a USB Bluetooth adapter on a short extension cable (see below). |
 | `le-connection-abort-by-local` / connect timeouts | Usually radio coexistence on the Pi 4 (see Host setup), or discovery running during connect. Retry. |
 | `kettle rejected the registration key` | Wrong key. Re-capture it (Option A) or pair (Option B). |
 | `not in pairing mode` | Hold the MyBrew button until the kettle signals pairing mode, then retry. |

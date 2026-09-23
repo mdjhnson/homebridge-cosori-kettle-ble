@@ -22,6 +22,9 @@ export const DIS_MANUFACTURER_UUID = '00002a29-0000-1000-8000-00805f9b34fb';
 /** Advertised local name observed on real kettles. */
 export const ADVERTISED_NAME = 'Cosori Gooseneck Kettle';
 
+/** Bluetooth SIG company identifier in the kettle's advertised manufacturer data (Etekcity Corporation). */
+export const ETEKCITY_COMPANY_ID = 0x06d0;
+
 /** Writes to FFF2 are split into chunks of this size with no extra framing. */
 export const BLE_CHUNK_SIZE = 20;
 
