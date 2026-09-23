@@ -1,0 +1,27 @@
+# Build output
+dist/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Test / coverage
+coverage/
+
+# Logs & packs
+*.log
+npm-debug.log*
+*.tgz
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# Local-only planning notes and personal stack config (contains private hostnames)
+brief.md
+homebridge.yaml
+
+# Local Homebridge test instance
+test/hbConfig/persist/
+test/hbConfig/accessories/

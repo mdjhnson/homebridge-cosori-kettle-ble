@@ -1,0 +1,62 @@
+{
+  "name": "homebridge-cosori-kettle-ble",
+  "displayName": "Cosori Kettle BLE",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Control a Cosori Smart Gooseneck Electric Kettle from HomeKit over Bluetooth LE (BlueZ / D-Bus).",
+  "author": "Matt Johnson",
+  "license": "MIT",
+  "homepage": "https://github.com/mdjhnson/homebridge-cosori-kettle-ble#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mdjhnson/homebridge-cosori-kettle-ble.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mdjhnson/homebridge-cosori-kettle-ble/issues"
+  },
+  "keywords": [
+    "homebridge-plugin",
+    "cosori",
+    "kettle",
+    "vesync",
+    "bluetooth",
+    "ble"
+  ],
+  "main": "dist/index.js",
+  "bin": {
+    "cosori-probe": "dist/cli/probe.js"
+  },
+  "files": [
+    "dist",
+    "config.schema.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^22.10.0 || ^24.0.0",
+    "homebridge": "^1.8.0 || ^2.0.0"
+  },
+  "scripts": {
+    "build": "rimraf ./dist && tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run lint && npm run build && npm test"
+  },
+  "dependencies": {
+    "node-ble": "~1.13.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "eslint": "^10.9.0",
+    "homebridge": "^2.4.0",
+    "rimraf": "^6.1.3",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^5.0.1"
+  }
+}

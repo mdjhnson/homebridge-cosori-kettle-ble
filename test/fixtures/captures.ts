@@ -1,0 +1,187 @@
+/**
+ * Known-good packets captured from real Cosori Smart Gooseneck kettles, used as unit-test fixtures.
+ *
+ * Sources (credit to the original authors — see LICENSE "Third-party acknowledgements"):
+ *   - rygwdn/ha-cosori-kettle: removed C++ port tests (tests/test_cpp.cpp @ f384906d), PROTOCOL.md,
+ *     README key-capture section, and GitHub issue #8 debug logs.
+ *   - barrymichels/CosoriKettleBLE: HANDSHAKE_EXTRACTION_GUIDE.md and hard-coded V0 frames in
+ *     components/cosori_kettle_ble/cosori_kettle_ble.cpp.
+ *
+ * Every entry in the "good" lists passes the frame checksum. Entries in BAD_CHECKSUM_FRAMES are
+ * examples from upstream docs that do NOT verify (hand-edited or mis-transcribed) and must be rejected.
+ */
+
+export interface TxFixture {
+  name: string;
+  hex: string;
+  seq: number;
+  /** Payload bytes after the 6-byte header. */
+  payload: string;
+}
+
+export const TX_FRAMES: TxFixture[] = [
+  { name: 'poll (seq 0x41)', hex: 'A5224104007201404000', seq: 0x41, payload: '01404000' },
+  { name: 'compact status request (seq 0xB5)', hex: 'A522B50400FD01414000', seq: 0xb5, payload: '01414000' },
+  { name: 'F0 coffee, no hold (seq 0x03)', hex: 'A5220309009501F0A3000300000000', seq: 0x03, payload: '01F0A3000300000000' },
+  { name: 'F0 coffee, no hold (seq 0x48)', hex: 'A5224809005001F0A3000300000000', seq: 0x48, payload: '01F0A3000300000000' },
+  { name: 'F4 stop (seq 0x04)', hex: 'A5220404009801F4A300', seq: 0x04, payload: '01F4A300' },
+  { name: 'F3 set MyBrew 179°F (seq 0x1C)', hex: 'A5221C0500CD01F3A300B3', seq: 0x1c, payload: '01F3A300B3' },
+  { name: 'F5 baby formula on (seq 0x25)', hex: 'A5222505007401F5A30001', seq: 0x25, payload: '01F5A30001' },
+  { name: 'F5 baby formula off (seq 0x1D)', hex: 'A5221D05007D01F5A30000', seq: 0x1d, payload: '01F5A30000' },
+  { name: 'F1 delayed start 3780 s, boil (seq 0x29)', hex: 'A522290B009901F1A300C40E0400000000', seq: 0x29, payload: '01F1A300C40E0400000000' },
+];
+
+export interface HelloFixture {
+  name: string;
+  /** The three BLE writes, in order (20 + 20 + 2 bytes). */
+  chunks: [string, string, string];
+  /** Registration key as 32 hex chars (decoded from the ASCII in the frame). */
+  key: string;
+  seq: number;
+  version: 0 | 1;
+  cmd: 'hello' | 'register';
+}
+
+export const HELLO_FRAMES: HelloFixture[] = [
+  {
+    name: 'VeSync app hello (barrymichels HANDSHAKE_EXTRACTION_GUIDE)',
+    chunks: [
+      'A5220424002E0181D10037663836383936326364',
+      '6530353662363062353430333433336164343262',
+      '6463',
+    ],
+    key: '7f868962cde056b60b5403433ad42bdc',
+    seq: 0x04,
+    version: 1,
+    cmd: 'hello',
+  },
+  {
+    name: 'ha-cosori-kettle hello (issue #8 log)',
+    chunks: [
+      'a522002400840181d10062613662356563386166',
+      '6437626464613338636263306135366164663737',
+      '3464',
+    ],
+    key: 'ba6b5ec8afd7bdda38cbc0a56adf774d',
+    seq: 0x00,
+    version: 1,
+    cmd: 'hello',
+  },
+  {
+    // Derived with the verified checksum from the C++ test key; not a capture.
+    name: 'register (derived, C++ test key)',
+    chunks: [
+      'a522002400a50180d10039393033653031613363',
+      '3362616138663663373163626235313637653764',
+      '3566',
+    ],
+    key: '9903e01a3c3baa8f6c71cbb5167e7d5f',
+    seq: 0x00,
+    version: 1,
+    cmd: 'register',
+  },
+];
+
+/** barrymichels' hard-coded V0 hello (seq 0, checksum 0x8A) for his own kettle's key. */
+export const BARRY_V0_HELLO = {
+  key: '64287a917e746a0731166b76f43d5cbb',
+  checksum: 0x8a,
+};
+
+export const ACK_FRAMES = [
+  { name: 'ACK set-mytemp (no status byte)', hex: 'A5121C04009101F3A300', seq: 0x1c, command: 0xf3, status: undefined },
+  { name: 'hello ACK accepted', hex: 'A512040500EC0181D10000', seq: 0x04, command: 0x81, status: 0x00 },
+  { name: 'hello ACK key rejected (issue #8)', hex: 'a512000500ef0181d10001', seq: 0x00, command: 0x81, status: 0x01 },
+];
+
+export const COMPLETION_FRAMES = [
+  { name: 'heating done', hex: 'A522980500E001F7A30020', code: 0x20 },
+  { name: 'hold timer done', hex: 'A522E105009601F7A30021', code: 0x21 },
+];
+
+export interface CompactFixture {
+  hex: string;
+  stage: number;
+  mode: number;
+  setpointF: number;
+  tempF: number;
+}
+
+export const COMPACT_FRAMES: CompactFixture[] = [
+  { hex: 'A522B50C00B3014140000000B38F00000000', stage: 0, mode: 0, setpointF: 179, tempF: 143 },
+  { hex: 'A5221F0C0073014140000000AF6900000000', stage: 0, mode: 0, setpointF: 175, tempF: 105 },
+  { hex: 'A522200C008A014140000000AF5100000000', stage: 0, mode: 0, setpointF: 175, tempF: 81 },
+  { hex: 'A522210C0088014140000000AF5100010000', stage: 0, mode: 0, setpointF: 175, tempF: 81 },
+  { hex: 'A5221D0C0068014140000101B46F00000000', stage: 1, mode: 1, setpointF: 180, tempF: 111 },
+  { hex: 'A5220B0C004B014140000104D47B00000000', stage: 1, mode: 4, setpointF: 212, tempF: 123 },
+  { hex: 'A5226A0C00E7014140000000B4A500000000', stage: 0, mode: 0, setpointF: 180, tempF: 165 },
+];
+
+export interface ExtendedFixture {
+  name: string;
+  hex: string;
+  stage: number;
+  mode: number;
+  setpointF: number;
+  tempF: number;
+  myTempF: number;
+  configuredHoldSeconds: number;
+  remainingHoldSeconds: number;
+  onBase: boolean;
+  babyFormula: boolean;
+}
+
+export const EXTENDED_FRAMES: ExtendedFixture[] = [
+  {
+    name: 'E1 boiling',
+    hex: 'a5:12:18:1d:00:a2:01:40:40:00:01:04:d4:7b:8c:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:08:07:00:00:01',
+    stage: 1, mode: 4, setpointF: 212, tempF: 123, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+  },
+  {
+    name: 'E2 green tea, holding (159 s of 300 s left)',
+    hex: 'A512831D00B6014040000301B4B5AF012C019F00000000580200000000002C01000001',
+    stage: 3, mode: 1, setpointF: 180, tempF: 181, myTempF: 175, configuredHoldSeconds: 300, remainingHoldSeconds: 159, onBase: true, babyFormula: false,
+  },
+  {
+    name: 'E3 idle, baby formula on',
+    hex: 'A5128B1D001401404000000068B2680000000000000000580200000000002C01010001',
+    stage: 0, mode: 0, setpointF: 104, tempF: 178, myTempF: 104, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: true,
+  },
+  {
+    name: 'E4 idle, off base',
+    hex: 'A512401D0093014040000000AF69AF0000000000010000C40E00000000003408000001',
+    stage: 0, mode: 0, setpointF: 175, tempF: 105, myTempF: 175, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: false, babyFormula: false,
+  },
+  {
+    name: 'E5 idle',
+    hex: 'A512871D001601404000000068B5680000000000000000580200000000002C01000001',
+    stage: 0, mode: 0, setpointF: 104, tempF: 181, myTempF: 104, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+  },
+  {
+    name: 'E6 idle on base (PROTOCOL.md)',
+    hex: 'a5:12:19:1d:00:10:01:40:40:00:00:00:d4:5c:8c:00:00:00:00:00:00:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
+    stage: 0, mode: 0, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+  },
+  {
+    name: 'E7 idle off base (PROTOCOL.md)',
+    hex: 'a5:12:1c:1d:00:0c:01:40:40:00:00:00:d4:5c:8c:00:00:00:00:00:01:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
+    stage: 0, mode: 0, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: false, babyFormula: false,
+  },
+  {
+    name: 'E8 boiling with 60 min hold (PROTOCOL.md scenario 2)',
+    hex: 'a5:12:23:1d:00:c4:01:40:40:00:01:04:d4:5c:8c:01:10:0e:10:0e:00:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
+    stage: 1, mode: 4, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 3600, remainingHoldSeconds: 3600, onBase: true, babyFormula: false,
+  },
+  {
+    name: 'E9 lifted off base, heating stopped (PROTOCOL.md scenario 2)',
+    hex: 'a5:12:25:1d:00:03:01:40:40:00:00:00:d4:5c:8c:00:00:00:00:00:01:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
+    stage: 0, mode: 0, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: false, babyFormula: false,
+  },
+];
+
+/** Upstream doc examples whose checksums do not verify. The parser must reject them. */
+export const BAD_CHECKSUM_FRAMES = [
+  { name: 'PROTOCOL.md compact example (wrong length + checksum)', hex: 'a5:22:5e:04:00:2f:01:41:40:00:00:00:d4:64:8c:00:00:00' },
+  { name: 'PROTOCOL.md 0x20 "start" frame', hex: 'a5:20:5f:0c:00:2e:01:41:40:00:01:00:d4:00:00:00:00:00' },
+  { name: 'PROTOCOL.md 0x20 "stop" frame', hex: 'a5:20:60:0c:00:2f:01:41:40:00:00:00:d4:00:00:00:00:00' },
+];
