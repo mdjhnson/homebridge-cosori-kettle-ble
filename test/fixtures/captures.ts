@@ -235,4 +235,16 @@ export const OWN_KETTLE_FRAMES = {
   extendedOffBase: 'a5 12 0c 1d 00 d6 01 40 40 00 00 00 b4 75 8c 00 00 00 00 00 01 00 00 00 00 00 00 00 00 01 08 07 00 01 01',
   /** Back on base. */
   extendedBackOnBase: 'a5 12 01 1d 00 e2 01 40 40 00 00 00 b4 75 8c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 08 07 00 01 01',
+  /** App "Delay Start": Green Tea in 25 min with 30 min hold → delay DC 05 (1500 s LE) + F0 body. */
+  delayStartGreen25Hold30: 'a5 22 04 0b 00 a2 01 f1 a3 00 dc 05 01 00 01 08 07',
+  /** Kettle ACK to F1: header only, no status byte. */
+  delayStartAck: 'a5 12 04 04 00 ab 01 f1 a3 00',
+  /** Pushed right after F1: compact status stage 5 (delay scheduled), mode 1. */
+  compactDelayScheduled: 'a5 22 45 0c 00 38 01 41 40 00 05 01 b4 72 01 00 00 00',
+  /** App "Cancel" on a scheduled delay: plain F4 stop. */
+  cancelDelayStop: 'a5 22 05 04 00 97 01 f4 a3 00',
+  /** Kettle ACK to F4: header only. */
+  stopAck: 'a5 12 05 04 00 a7 01 f4 a3 00',
+  /** Pushed after cancel: back to idle. */
+  compactAfterCancel: 'a5 22 46 0c 00 3e 01 41 40 00 00 00 b4 72 00 00 00 00',
 };

@@ -8,10 +8,10 @@ import { EventEmitter } from 'node:events';
 
 import type { DeviceInfo, KettleTransport } from '../ble/Transport.js';
 import {
-  Cmd, Completion, FrameType, Mode, PRESET_TEMP_F, ProtocolVersion, Stage,
+  Cmd, Completion, FrameType, isHeatingStage, Mode, PRESET_TEMP_F, ProtocolVersion, Stage,
 } from '../protocol/constants.js';
 import {
-  commandFrame, compactStatusPayload, helloPayload, pollPayload, registerPayload, setHoldPayload, setModePayload,
+  commandFrame, compactStatusPayload, delayedStartPayload, helloPayload, pollPayload, registerPayload, setHoldPayload, setModePayload,
   setMyTempPayload, stopPayload, type SetModeOptions,
 } from '../protocol/commands.js';
 import { buildFrame, FrameParser, splitIntoChunks, toHex, type Frame } from '../protocol/frame.js';
@@ -34,8 +34,10 @@ export interface KettleStatus {
   /** Undefined until the first extended status has been received. */
   onBase?: boolean;
   babyFormula?: boolean;
-  /** True while heating or holding (stage != 0). */
+  /** True while heating or keeping warm (stages 1–3). */
   active: boolean;
+  /** True while a delayed start is scheduled (stage 5). */
+  scheduled: boolean;
   updatedAt: number;
 }
 
@@ -215,8 +217,26 @@ export class KettleClient extends EventEmitter<Events> {
     await this.send(Cmd.SET_MODE, setModePayload(this.versionByte, mode, options));
   }
 
+  /** Stop heating / keep-warm, or cancel a scheduled delayed start. */
   async stop(): Promise<void> {
     await this.send(Cmd.STOP, stopPayload(this.versionByte));
+  }
+
+  /** Schedule heating to start in `delaySeconds` (kettle-side timer; the link may drop meanwhile). */
+  async delayedStart(delaySeconds: number, mode: number, options: SetModeOptions = {}): Promise<void> {
+    await this.send(Cmd.DELAYED_START, delayedStartPayload(this.versionByte, delaySeconds, mode, options));
+  }
+
+  /** Like heatTo(), but scheduled: preset when the target is a preset temperature, else MyBrew (F3 first). */
+  async heatToLater(delaySeconds: number, tempF: number, holdSeconds = 0): Promise<number> {
+    const mode = presetForTemp(tempF);
+    if (mode !== undefined) {
+      await this.delayedStart(delaySeconds, mode, { holdSeconds });
+      return mode;
+    }
+    await this.setMyTemp(tempF);
+    await this.delayedStart(delaySeconds, Mode.MY_BREW, { tempF, holdSeconds });
+    return Mode.MY_BREW;
   }
 
   /**
@@ -340,7 +360,8 @@ export class KettleClient extends EventEmitter<Events> {
         mode: message.mode,
         setpointF: message.setpointF,
         tempF: message.tempF,
-        active: message.stage !== Stage.IDLE,
+        active: isHeatingStage(message.stage),
+        scheduled: message.stage === Stage.DELAY_SCHEDULED,
         updatedAt: Date.now(),
       };
       this.emit('compact', this.last, changed);
@@ -381,7 +402,8 @@ export class KettleClient extends EventEmitter<Events> {
       remainingHoldSeconds: s.remainingHoldSeconds,
       onBase: s.onBase,
       babyFormula: s.babyFormula,
-      active: s.stage !== Stage.IDLE,
+      active: isHeatingStage(s.stage),
+      scheduled: s.stage === Stage.DELAY_SCHEDULED,
       updatedAt: Date.now(),
     };
     this.emit('status', this.last);

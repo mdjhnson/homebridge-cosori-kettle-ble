@@ -69,7 +69,10 @@ export const CmdClass = {
   STATUS: 0x40,
 } as const;
 
-/** Commands whose ACK carries a trailing status byte (00 = OK). */
+/**
+ * Commands whose ACK may carry a trailing status byte (00 = OK). On HW 1.0.00 / SW R0007V0012 only the
+ * register/hello ACKs do; F0, F1, F3 and F4 ACKs echo just the 4-byte header. A status is honoured if present.
+ */
 export const COMMANDS_WITH_STATUS: ReadonlySet<number> = new Set([
   Cmd.REGISTER, Cmd.HELLO, Cmd.SET_MODE, Cmd.DELAYED_START, Cmd.SET_HOLD, Cmd.SET_MY_TEMP, Cmd.STOP, Cmd.SET_BABY_FORMULA,
 ]);
@@ -111,13 +114,21 @@ export const Stage = {
   HEATING: 0x01,
   ALMOST_DONE: 0x02,
   HOLDING: 0x03,
+  /** A delayed start (F1) is scheduled and counting down. Observed on HW 1.0.00 / SW R0007V0012; not in upstream docs. */
+  DELAY_SCHEDULED: 0x05,
 } as const;
+
+/** True while the kettle is heating or keeping warm (not idle, not merely scheduled). */
+export function isHeatingStage(stage: number): boolean {
+  return stage === Stage.HEATING || stage === Stage.ALMOST_DONE || stage === Stage.HOLDING;
+}
 
 export const STAGE_NAMES: Readonly<Record<number, string>> = {
   [Stage.IDLE]: 'idle',
   [Stage.HEATING]: 'heating',
   [Stage.ALMOST_DONE]: 'almost done',
   [Stage.HOLDING]: 'holding',
+  [Stage.DELAY_SCHEDULED]: 'delay scheduled',
 };
 
 /** Completion notification codes (kettle → host, cmd F7). */
@@ -136,6 +147,9 @@ export const MAX_VALID_READING_F = 230;
 
 /** Documented maximum hold / keep-warm time (seconds). */
 export const MAX_HOLD_SECONDS = 3600;
+
+/** Maximum delayed-start delay (seconds). Upstream PROTOCOL.md documents 0–12 h. */
+export const MAX_DELAY_SECONDS = 12 * 3600;
 
 /** Registration keys are 16 bytes, sent as 32 lowercase ASCII hex characters. */
 export const REGISTRATION_KEY_BYTES = 16;

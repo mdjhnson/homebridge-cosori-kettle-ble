@@ -14,9 +14,10 @@ import { NodeBleTransport, resolveDbusAddress, type ScanResult, type WriteMode }
 import { InvalidRegistrationKeyError, NotInPairingModeError } from '../kettle/errors.js';
 import { describeCompletion, KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
 import {
-  ADVERTISED_NAME, type CapturedHandshake, ETEKCITY_COMPANY_ID, findHandshakesInLog, findHandshakesInPklg, generateKey,
-  keyFromHelloPackets, keyToHex, type LogScanResult, looksLikePklg, MAX_HOLD_SECONDS, Mode, MODE_NAMES, parseKey,
-  PRESET_TEMP_F, ProtocolVersion, STAGE_NAMES, toHex,
+  ADVERTISED_NAME, buildFrame, type CapturedHandshake, Cmd, decodeMessage, ETEKCITY_COMPANY_ID, extractAttPdus, findHandshakesInLog,
+  findHandshakesInPklg, type Frame, FrameParser, generateKey, type KettleMessage, keyFromHelloPackets, keyToHex, type LogScanResult,
+  looksLikePklg, MAX_DELAY_SECONDS, MAX_HOLD_SECONDS, Mode, MODE_NAMES, parseKey, parsePklgRecords, PRESET_TEMP_F, ProtocolVersion,
+  STAGE_NAMES, toHex,
 } from '../protocol/index.js';
 import { delay, errorMessage } from '../util/async.js';
 import { consoleLogger, type Logger } from '../util/log.js';
@@ -32,6 +33,7 @@ Read-only:
   key-from-log <file>          Find the VeSync app's registration key in a PacketLogger capture (.pklg, or text export) (offline)
   key-from-packets <p1> <p2> <p3>
                                Recover the key from the 3 hello writes, pasted as hex (offline)
+  decode-log <file.pklg>       List every frame the app and kettle exchanged, decoded (key redacted) (offline)
   status <mac>                 Hello with --key, poll once, print decoded status
   watch <mac>                  Hello with --key, poll every --interval seconds and print live status (Ctrl-C to stop)
 
@@ -43,7 +45,8 @@ Changes kettle state (require --yes; documented commands only):
                                  --hold-min N    keep warm N minutes afterwards
                                  --temp F        target °F (required for mybrew; for presets overrides byte[5])
                                  --hold-be       encode the hold field big-endian (encoding verification only)
-  stop <mac>                   Stop heating / keep-warm
+  delay <mac> <minutes> <mode> Schedule heating (kettle-side timer). Same mode/--hold-min/--temp options as start
+  stop <mac>                   Stop heating / keep-warm / cancel a scheduled delay
 
 Options:
   --key <hex>                  32-hex-char registration key (or env COSORI_KEY)
@@ -86,6 +89,7 @@ type Flags = {
   verbose?: boolean;
   yes?: boolean;
   all?: boolean;
+  'show-key'?: boolean;
   help?: boolean;
 };
 
@@ -105,6 +109,9 @@ function formatStatus(s: KettleStatus): string {
     `hold=${s.remainingHoldSeconds}s left / ${s.configuredHoldSeconds}s set`,
     `onBase=${s.onBase === undefined ? '?' : s.onBase ? 'yes' : 'NO'}`,
   ];
+  if (s.scheduled) {
+    parts.push('DELAY SCHEDULED');
+  }
   if (s.babyFormula) {
     parts.push('babyFormula=on');
   }
@@ -337,6 +344,72 @@ function cmdKeyFromLog(file: string | undefined): void {
   }
 }
 
+function commandName(cmd: number): string {
+  const names: Record<number, string> = {
+    [Cmd.REGISTER]: 'register', [Cmd.HELLO]: 'hello', [Cmd.POLL]: 'poll', [Cmd.COMPACT_STATUS]: 'compact status',
+    [Cmd.SET_MODE]: 'start (F0)', [Cmd.DELAYED_START]: 'delayed start (F1)', [Cmd.SET_HOLD]: 'set hold (F2)',
+    [Cmd.SET_MY_TEMP]: 'set mybrew (F3)', [Cmd.STOP]: 'stop (F4)', [Cmd.SET_BABY_FORMULA]: 'baby formula (F5)',
+  };
+  return names[cmd] ?? `cmd 0x${cmd.toString(16)}`;
+}
+
+function describe(message: KettleMessage, frame: Frame): string {
+  switch (message.kind) {
+  case 'extended':
+    return `status: ${STAGE_NAMES[message.stage] ?? `stage ${message.stage}`}, mode ${MODE_NAMES[message.mode] ?? message.mode}, `
+      + `${message.tempF}°F → ${message.setpointF}°F, mybrew ${message.myTempF ?? '—'}°F, `
+      + `hold ${message.remainingHoldSeconds}/${message.configuredHoldSeconds}s, ${message.onBase ? 'on base' : 'OFF BASE'}`;
+  case 'compact':
+    return `pushed: ${STAGE_NAMES[message.stage] ?? `stage ${message.stage}`}, mode ${MODE_NAMES[message.mode] ?? message.mode}, `
+      + `${message.tempF}°F → ${message.setpointF}°F`;
+  case 'ack':
+    return `ACK ${commandName(message.command)}${message.status === undefined ? '' : ` status ${message.status.toString(16).padStart(2, '0')}`}`;
+  case 'completion':
+    return describeCompletion(message.code);
+  case 'invalid':
+    return `invalid: ${message.reason}`;
+  default:
+    return commandName(frame.payload[1] ?? -1);
+  }
+}
+
+function cmdDecodeLog(file: string | undefined, flags: Flags): void {
+  if (!file) {
+    throw new UsageError('pass the path of a PacketLogger .pklg capture');
+  }
+  const data = readFileSync(file);
+  const records = parsePklgRecords(data);
+  if (!records) {
+    throw new UsageError(`${file} is not a PacketLogger .pklg capture (save the trace with File → Save As…)`);
+  }
+  const pdus = extractAttPdus(records);
+  const writes = pdus.filter((p) => p.direction === 'tx' && (p.opcode === 0x12 || p.opcode === 0x52));
+  // The command characteristic is the write handle that carries A5-framed traffic.
+  const txHandle = writes.find((p) => p.value[0] === 0xa5)?.attHandle;
+  const rxHandle = pdus.find((p) => p.direction === 'rx' && (p.opcode === 0x1b || p.opcode === 0x1d) && p.value[0] === 0xa5)?.attHandle;
+  if (txHandle === undefined) {
+    throw new Error('no kettle traffic (A5 frames) found in this capture');
+  }
+  const t0 = pdus[0]!.timestampMs;
+  const tx = new FrameParser();
+  const rx = new FrameParser();
+  console.log(`command handle 0x${txHandle.toString(16).padStart(4, '0')}, notify handle 0x${(rxHandle ?? 0).toString(16).padStart(4, '0')}`);
+  for (const pdu of pdus) {
+    const isTx = pdu.direction === 'tx' && (pdu.opcode === 0x12 || pdu.opcode === 0x52) && pdu.attHandle === txHandle;
+    const isRx = pdu.direction === 'rx' && (pdu.opcode === 0x1b || pdu.opcode === 0x1d) && pdu.attHandle === rxHandle;
+    if (!isTx && !isRx) {
+      continue;
+    }
+    for (const frame of (isTx ? tx : rx).push(pdu.value)) {
+      const bytes = buildFrame(frame.frameType, frame.seq, frame.payload);
+      const isAuth = (frame.payload[1] === Cmd.HELLO || frame.payload[1] === Cmd.REGISTER) && frame.payload.length >= 36;
+      const hex = isAuth && !flags['show-key'] ? `${toHex(bytes.subarray(0, 10))} <key redacted>` : toHex(bytes);
+      const t = ((pdu.timestampMs - t0) / 1000).toFixed(3).padStart(8);
+      console.log(`${t}s ${isTx ? 'APP →' : 'KETTLE ←'} ${hex}\n${' '.repeat(10)}${describe(decodeMessage(frame), frame)}`);
+    }
+  }
+}
+
 async function cmdStatus(mac: string, flags: Flags, log: Logger): Promise<void> {
   await withClient(mac, flags, log, async (client) => {
     await authenticate(client, flags, log);
@@ -472,6 +545,32 @@ async function cmdStart(mac: string, modeArg: string | undefined, flags: Flags, 
   });
 }
 
+async function cmdDelay(mac: string, minutesArg: string | undefined, modeArg: string | undefined, flags: Flags, log: Logger): Promise<void> {
+  requireYes(flags, 'delay');
+  const delaySeconds = Math.round(parseNumber(minutesArg, 'minutes', 1, MAX_DELAY_SECONDS / 60) * 60);
+  const mode = modeArg ? MODE_ARGS[modeArg.toLowerCase()] : undefined;
+  if (mode === undefined) {
+    throw new UsageError(`mode must be one of: ${Object.keys(MODE_ARGS).join(', ')}`);
+  }
+  const holdSeconds = flags['hold-min'] ? Math.round(parseNumber(flags['hold-min'], '--hold-min', 0, MAX_HOLD_SECONDS / 60) * 60) : 0;
+  const tempF = flags.temp ? parseNumber(flags.temp, '--temp', 104, 212) : undefined;
+  if (mode === Mode.MY_BREW && tempF === undefined) {
+    throw new UsageError('mybrew needs --temp <°F>');
+  }
+  await withClient(mac, flags, log, async (client) => {
+    await authenticate(client, flags, log);
+    const before = await client.poll();
+    if (mode === Mode.MY_BREW) {
+      log.info(`Sending F3 set MyBrew = ${tempF}°F`);
+      await client.setMyTemp(tempF!);
+    }
+    log.info(`Sending F1 delayed start: ${MODE_NAMES[mode]} in ${delaySeconds / 60} min, hold ${holdSeconds}s`);
+    await client.delayedStart(delaySeconds, mode, { tempF, holdSeconds });
+    await reportAfterWrite(client, before, log);
+    log.info('The kettle keeps this schedule itself. Cancel it with `stop` (or the VeSync app).');
+  });
+}
+
 async function cmdStop(mac: string, flags: Flags, log: Logger): Promise<void> {
   requireYes(flags, 'stop');
   await withClient(mac, flags, log, async (client) => {
@@ -505,6 +604,7 @@ async function main(argv: string[]): Promise<number> {
         verbose: { type: 'boolean', short: 'v' },
         yes: { type: 'boolean', short: 'y' },
         all: { type: 'boolean' },
+        'show-key': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     });
@@ -557,6 +657,12 @@ async function main(argv: string[]): Promise<number> {
       break;
     case 'stop':
       await cmdStop(requireMac(args[0]), flags, log);
+      break;
+    case 'delay':
+      await cmdDelay(requireMac(args[0]), args[1], args[2], flags, log);
+      break;
+    case 'decode-log':
+      cmdDecodeLog(args[0], flags);
       break;
     default:
       throw new UsageError(`unknown command "${command}"`);

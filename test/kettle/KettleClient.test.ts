@@ -5,7 +5,7 @@ import {
 } from '../../src/kettle/errors.js';
 import { KettleClient, presetForTemp } from '../../src/kettle/KettleClient.js';
 import { buildFrame, Cmd, fromHex, Mode, parseFrame, parseKey, ProtocolVersion } from '../../src/protocol/index.js';
-import { COMPACT_FRAMES, COMPLETION_FRAMES, EXTENDED_FRAMES } from '../fixtures/captures.js';
+import { COMPACT_FRAMES, COMPLETION_FRAMES, EXTENDED_FRAMES, OWN_KETTLE_FRAMES } from '../fixtures/captures.js';
 import { FakeTransport, type Responder } from './FakeTransport.js';
 
 const KEY = parseKey('9903e01a3c3baa8f6c71cbb5167e7d5f');
@@ -175,6 +175,22 @@ describe('KettleClient', () => {
     expect(onCompact).toHaveBeenCalledWith(expect.objectContaining({ stage: 1, mode: 4, setpointF: 212, tempF: 123, onBase: true }), true);
     fake.notify(COMPACT_FRAMES[5]!.hex);
     expect(onCompact).toHaveBeenLastCalledWith(expect.anything(), false);
+  });
+
+  it('delayedStart sends F1 and a pushed stage-5 status reads as scheduled, not active', async () => {
+    const { fake, client } = await connected();
+    await client.poll();
+    await client.delayedStart(1500, Mode.GREEN_TEA, { holdSeconds: 1800 });
+    expect([...fake.sent[1]!.payload]).toEqual([0x01, 0xf1, 0xa3, 0x00, 0xdc, 0x05, 0x01, 0x00, 0x01, 0x08, 0x07]);
+    fake.notify(OWN_KETTLE_FRAMES.compactDelayScheduled);
+    expect(client.status).toMatchObject({ stage: 5, scheduled: true, active: false });
+  });
+
+  it('heatToLater picks a preset or schedules MyBrew after F3', async () => {
+    const { fake, client } = await connected();
+    expect(await client.heatToLater(600, 212)).toBe(Mode.BOIL);
+    expect(await client.heatToLater(600, 170)).toBe(Mode.MY_BREW);
+    expect(fake.sent.map((f) => f.payload[1])).toEqual([Cmd.DELAYED_START, Cmd.SET_MY_TEMP, Cmd.DELAYED_START]);
   });
 
   it('emits completion notifications', async () => {

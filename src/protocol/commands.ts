@@ -8,7 +8,7 @@
  * Frames are always sent with frame type 0x22 (FrameType.MESSAGE).
  */
 import {
-  Cmd, CmdClass, FrameType, MAX_HOLD_SECONDS, MAX_SETPOINT_F, MIN_SETPOINT_F, Mode, ProtocolVersion,
+  Cmd, CmdClass, FrameType, MAX_DELAY_SECONDS, MAX_HOLD_SECONDS, MAX_SETPOINT_F, MIN_SETPOINT_F, Mode, ProtocolVersion,
 } from './constants.js';
 import { buildFrame } from './frame.js';
 import { keyToAscii } from './key.js';
@@ -88,11 +88,8 @@ export interface SetModeOptions {
   holdByteOrder?: ByteOrder;
 }
 
-/**
- * Start heating in a mode. Layout: [hdr] MM TT EN H0 H1
- * For MyBrew, send SET_MY_TEMP first; F0's temperature byte alone is not known to set it.
- */
-export function setModePayload(version: ProtocolVersion, mode: number, options: SetModeOptions = {}): Buffer {
+/** Mode byte, temperature byte, hold-enable byte and 16-bit LE hold: the body shared by F0 and F1. */
+function modeBody(mode: number, options: SetModeOptions): number[] {
   if (!Object.values(Mode).includes(mode as Mode) || mode === Mode.NONE) {
     throw new RangeError(`unknown mode 0x${mode.toString(16)}`);
   }
@@ -106,12 +103,32 @@ export function setModePayload(version: ProtocolVersion, mode: number, options: 
   } else {
     throw new RangeError('tempF is required for MyBrew / V0 heat mode');
   }
+  return [mode, tempByte, hold > 0 ? 1 : 0, ...u16(hold, options.holdByteOrder ?? 'le')];
+}
+
+/**
+ * Start heating in a mode. Layout: [hdr] MM TT EN H0 H1
+ * For MyBrew, send SET_MY_TEMP first; F0's temperature byte alone is not known to set it.
+ */
+export function setModePayload(version: ProtocolVersion, mode: number, options: SetModeOptions = {}): Buffer {
+  return Buffer.from([...header(version, Cmd.SET_MODE, CmdClass.CONTROL), ...modeBody(mode, options)]);
+}
+
+/**
+ * Schedule heating to start after a delay (the app's "Delay Start"). Layout: [hdr] DL DH | MM TT EN H0 H1
+ * i.e. a little-endian delay in seconds followed by exactly the F0 body. Verified from a VeSync-app capture
+ * (Green Tea in 25 min, hold 30 min → `01 F1 A3 00 DC 05 01 00 01 08 07`) and the upstream capture
+ * (boil in 3780 s → `01 F1 A3 00 C4 0E 04 00 00 00 00`). While scheduled the kettle reports stage 5.
+ * Cancel with STOP (F4), as the app does.
+ */
+export function delayedStartPayload(version: ProtocolVersion, delaySeconds: number, mode: number, options: SetModeOptions = {}): Buffer {
+  if (!Number.isInteger(delaySeconds) || delaySeconds < 1 || delaySeconds > MAX_DELAY_SECONDS) {
+    throw new RangeError(`delay must be an integer 1–${MAX_DELAY_SECONDS} seconds (got ${delaySeconds})`);
+  }
   return Buffer.from([
-    ...header(version, Cmd.SET_MODE, CmdClass.CONTROL),
-    mode,
-    tempByte,
-    hold > 0 ? 1 : 0,
-    ...u16(hold, options.holdByteOrder ?? 'le'),
+    ...header(version, Cmd.DELAYED_START, CmdClass.CONTROL),
+    ...u16(delaySeconds, 'le'),
+    ...modeBody(mode, options),
   ]);
 }
 

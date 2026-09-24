@@ -203,7 +203,9 @@ docker exec -it homebridge cosori-probe <command> [args] [options]
 | `set-mybrew <mac> <°F> --key K --yes` | F3 | Store the MyBrew temperature |
 | `hold <mac> <minutes> --key K --yes` | F2 | Set keep-warm time |
 | `start <mac> <mode> --key K --yes [--hold-min N] [--temp F]` | F0 (+F3) | Start `boil` / `green` / `oolong` / `coffee` / `mybrew` |
-| `stop <mac> --key K --yes` | F4 | Stop heating |
+| `delay <mac> <minutes> <mode> --key K --yes [--hold-min N] [--temp F]` | F1 (+F3) | Schedule heating on the kettle's own timer (like the app's Delay Start) |
+| `stop <mac> --key K --yes` | F4 | Stop heating, or cancel a scheduled delay |
+| `decode-log <file.pklg>` | — (offline) | List every frame in a PacketLogger capture, decoded, key redacted |
 
 Common options: `--raw` (print every frame in hex), `--verbose`, `--dbus <path|address>`, `--adapter hci1`, `--protocol 0|1`, `--write-mode request|command`. You can put the key in the `COSORI_KEY` environment variable instead of passing `--key`:
 
@@ -249,7 +251,11 @@ These notes are based on the reverse-engineering work in the projects listed und
 - **Checksum:** start at 0 and subtract every byte of the frame, treating the checksum byte itself as `0x01`, then take the result mod 256. This single rule matches every capture, for both V0 and V1. The "sum of header bytes" formula in upstream docs does not match real traffic.
 - **Handshake:** first-time pairing is register (`80 D1`) followed by hello (`81 D1`). After that, hello alone. The key is sent as 32 ASCII hex characters. On first pairing, hello must not be sent before register.
 - **16-bit fields are little-endian:** this covers the hold time in F2, F0 (start) and the status frames, and the F1 delay. One upstream library sends F0's hold big-endian. A capture of the VeSync app starting Green Tea with a 30-minute hold settles it: `01 F0 A3 00 01 00 01 08 07` is `0x0708` = 1800 s, so the field is little-endian. The app also sends `00` in F0's temperature byte for presets.
-- **ACKs to F0 (start) and F3 (set MyBrew) have no status byte.** Only register and hello replies carry one.
+- **Delayed start (F1)** is a little-endian delay in seconds followed by exactly the F0 body: `01 F1 A3 00 | DC 05 | 01 00 01 08 07` means Green Tea in 1500 s (25 min) with a 1800 s hold. Verified from a VeSync-app capture. While a delay is pending, the kettle reports **stage 5**, which is not in upstream docs. The app cancels a delay with a plain stop (F4).
+- **ACKs to F0, F1, F3 and F4 have no status byte.** Only register and hello replies carry one.
+- **Tapping a preset in the VeSync app sends nothing.** The app keeps the selection locally until you press Start or Set Schedule.
+- **Lifting the kettle** makes it push a compact status immediately, with payload `[9] = 01`. The extended status `[14]` confirms it on the next poll.
+- **Extended status `[24–25]`** holds the app's saved "Hold Temp" duration (little-endian seconds), and `[23]` appears to be its on/off flag.
 - **Extended status offsets** (payload): `[4]` stage, `[5]` mode, `[6]` setpoint °F, `[7]` current temperature °F, `[8]` MyBrew °F, `[10–11]` configured hold (LE), `[12–13]` remaining hold (LE), `[14]` on-base (`00` = on base), `[26]` baby-formula mode.
 - All temperatures on the wire are °F. The setpoint range is 104–212 °F; readings outside 40–230 °F are discarded.
 
