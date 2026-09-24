@@ -2,7 +2,7 @@
 
 Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — normally used with the VeSync app) from Apple HomeKit via [Homebridge](https://homebridge.io), talking to the kettle directly over Bluetooth LE.
 
-> **Status: pre-release (Checkpoint A).** The protocol library and the `cosori-probe` diagnostic CLI are ready for testing on real hardware. The HomeKit layer is not implemented yet — installing the plugin now only adds the probe tool. Not published to npm.
+> **Status: pre-release.** The protocol library and the `cosori-probe` CLI have been validated on a real kettle (HW 1.0.00 / SW R0007V0012). The HomeKit layer is implemented and tested against a simulated kettle; HomeKit testing on real hardware is in progress. Not published to npm.
 
 - BLE via [node-ble](https://github.com/chrvadala/node-ble) (BlueZ over D-Bus): **no privileged container, no capabilities, no `/dev` passthrough, no native modules**.
 - Works in the official `homebridge/homebridge` Docker image with host networking and the host D-Bus socket mounted.
@@ -15,6 +15,8 @@ Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — norma
 - [Docker changes](#docker-changes)
 - [Install (pre-release)](#install-pre-release)
 - [Registration key](#registration-key)
+- [Configuration](#configuration)
+- [HomeKit](#homekit)
 - [cosori-probe CLI](#cosori-probe-cli)
 - [The one-connection limitation](#the-one-connection-limitation)
 - [Troubleshooting](#troubleshooting)
@@ -182,6 +184,59 @@ docker exec -it homebridge cosori-probe pair AA:BB:CC:DD:EE:FF --yes
 ```
 
 The probe generates a random key and asks you to **press and hold the MyBrew button** to put the kettle into pairing mode. It then registers the key and verifies it with a hello. It is **not yet known whether registering a new key unpairs the VeSync app**, so use Option A if you rely on the app.
+
+## Configuration
+
+Configure the plugin in the Homebridge UI (the form is generated from `config.schema.json`), or add it to `config.json`. **Run it as a child bridge**, so that a Bluetooth problem can never affect your other accessories:
+
+```json
+{
+  "platform": "CosoriKettleBLE",
+  "name": "Kettle",
+  "mac": "FC:58:FA:0F:C3:26",
+  "registrationKey": "<32 hex characters>",
+  "_bridge": { "username": "0E:A1:B2:C3:D4:E5", "port": 51830 }
+}
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `name` | `Kettle` | Accessory name |
+| `mac` | — (required) | Kettle Bluetooth address (`cosori-probe scan`) |
+| `registrationKey` | — | 32-hex-char key. Without it the plugin will not connect; see [Registration key](#registration-key) |
+| `connectionMode` | `persistent` | `persistent`: always connected, real-time. `onDemand`: connect for commands and a slow poll, then disconnect so the VeSync app can connect |
+| `pollInterval` | `5` | Seconds between status polls while connected. The kettle also pushes changes on its own |
+| `onDemandPollInterval` | `300` | On demand: seconds between background status checks |
+| `idleDisconnect` | `30` | On demand: seconds idle before disconnecting. The plugin stays connected while the kettle is heating |
+| `temperatureUnit` | `F` | Display unit in HomeKit (`F` or `C`) |
+| `keepWarmMinutes` | `30` | Keep-warm duration, 1–60 |
+| `delayStartMinutes` | `30` | Delay used by the Delay Start switch, 1–720 |
+| `accessories.onBaseSensor` | `true` | "On Base" occupancy sensor |
+| `accessories.keepWarmSwitch` | `true` | Keep Warm switch |
+| `accessories.delayStartSwitch` | `false` | Delay Start switch |
+| `accessories.presets.{boil,greenTea,oolong,coffee,myBrew}` | only `boil` | Preset switches |
+| `dbusAddress` | `auto` | `auto` uses `/run/dbus-host/system_bus_socket` if present (Docker), else the system bus |
+| `adapter` | default | BlueZ adapter, e.g. `hci1` for a USB Bluetooth adapter |
+| `protocolVersion` | `auto` | `auto` detects it from firmware; `0` or `1` forces it |
+| `debug` | `false` | Log every Bluetooth frame |
+
+**Choosing a connection mode.** Connecting can take 10–40 s when the signal is weak, and HomeKit reports "No Response" after about 10 s. `persistent` pays that cost once and then responds instantly; choose it unless you need the VeSync app to connect regularly.
+
+## HomeKit
+
+| Service | Behaviour |
+|---|---|
+| **Thermostat** (main tile) | Set the target (40–100 °C / 104–212 °F) and switch Heat/Off. A target equal to a preset (180/195/205/212 °F) uses that preset; any other value is stored as the MyBrew temperature and heats in MyBrew mode. Changing the target while idle is remembered and applied when heating starts. Current temperature is smoothed to hide the sensor's ±1 °F flicker. |
+| **On Base** (occupancy) | "Occupied" while the kettle is on its base. Heating is refused while it is off the base. |
+| **Preset switches** | On = heating in that mode. Turning one on starts that preset; turning it off stops the kettle. |
+| **Keep Warm** | Whether heating holds the temperature for `keepWarmMinutes` afterwards. Toggling it while heating updates the running kettle. |
+| **Delay Start** | Schedules heating to the current target after `delayStartMinutes`, using the kettle's own timer, so it runs even if Bluetooth drops. On while scheduled; turning it off cancels. |
+
+The kettle's controls on the base and the VeSync app keep working. Changes made there show up in HomeKit on the next poll, or instantly when the kettle pushes them.
+
+**Schedules.** For "every weekday at 6:30", create a Home app automation (*Automation → A Time of Day → Kettle → Heat*). The Delay Start switch is for "start in N minutes" when you want the kettle to keep the time itself.
+
+When the plugin cannot reach the kettle, its tiles show **No Response** after about 90 seconds (persistent mode). Commands tapped while it is reconnecting wait for up to 45 seconds.
 
 ## cosori-probe CLI
 

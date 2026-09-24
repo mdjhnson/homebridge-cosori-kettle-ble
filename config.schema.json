@@ -1,0 +1,180 @@
+{
+  "pluginAlias": "CosoriKettleBLE",
+  "pluginType": "platform",
+  "singular": true,
+  "strictValidation": false,
+  "headerDisplay": "Controls a Cosori Smart Gooseneck Kettle over Bluetooth LE. Find the MAC with `cosori-probe scan` and get the registration key with `cosori-probe key-from-log` — see the [README](https://github.com/mdjhnson/homebridge-cosori-kettle-ble#readme). The kettle accepts only one Bluetooth connection: while the plugin is connected, the VeSync app cannot connect.",
+  "footerDisplay": "Run this plugin as a child bridge. Docker: mount the host D-Bus with `- /run/dbus:/run/dbus-host:ro`.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Kettle",
+        "required": true
+      },
+      "mac": {
+        "title": "Kettle MAC address",
+        "type": "string",
+        "placeholder": "AA:BB:CC:DD:EE:FF",
+        "pattern": "^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$",
+        "required": true,
+        "description": "From `cosori-probe scan`."
+      },
+      "registrationKey": {
+        "title": "Registration key",
+        "type": "string",
+        "placeholder": "32 hex characters",
+        "pattern": "^\\s*[0-9A-Fa-f]{32}\\s*$",
+        "description": "The key the kettle accepts. Reuse the VeSync app's key (`cosori-probe key-from-log`) or pair a new one (`cosori-probe pair`). Treat it like a password."
+      },
+      "connectionMode": {
+        "title": "Connection mode",
+        "type": "string",
+        "default": "persistent",
+        "oneOf": [
+          { "title": "Persistent — always connected, real-time state (recommended)", "enum": ["persistent"] },
+          { "title": "On demand — connect for commands and a slow poll, then disconnect (lets the VeSync app connect in between)", "enum": ["onDemand"] }
+        ]
+      },
+      "pollInterval": {
+        "title": "Poll interval while connected (seconds)",
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 300,
+        "description": "The kettle also pushes changes on its own; polling refreshes on-base and keep-warm state."
+      },
+      "onDemandPollInterval": {
+        "title": "On demand: status check interval (seconds)",
+        "type": "integer",
+        "default": 300,
+        "minimum": 30,
+        "maximum": 86400,
+        "condition": { "functionBody": "return model.connectionMode === 'onDemand';" }
+      },
+      "idleDisconnect": {
+        "title": "On demand: disconnect after idle (seconds)",
+        "type": "integer",
+        "default": 30,
+        "minimum": 5,
+        "maximum": 3600,
+        "description": "The plugin stays connected while the kettle is heating or keeping warm.",
+        "condition": { "functionBody": "return model.connectionMode === 'onDemand';" }
+      },
+      "temperatureUnit": {
+        "title": "Temperature display unit",
+        "type": "string",
+        "default": "F",
+        "oneOf": [
+          { "title": "Fahrenheit", "enum": ["F"] },
+          { "title": "Celsius", "enum": ["C"] }
+        ]
+      },
+      "keepWarmMinutes": {
+        "title": "Keep-warm duration (minutes)",
+        "type": "integer",
+        "default": 30,
+        "minimum": 1,
+        "maximum": 60
+      },
+      "delayStartMinutes": {
+        "title": "Delay Start switch: delay (minutes)",
+        "type": "integer",
+        "default": 30,
+        "minimum": 1,
+        "maximum": 720,
+        "condition": { "functionBody": "return model.accessories && model.accessories.delayStartSwitch === true;" }
+      },
+      "accessories": {
+        "title": "Extra accessories",
+        "type": "object",
+        "properties": {
+          "onBaseSensor": { "title": "\"On Base\" occupancy sensor", "type": "boolean", "default": true },
+          "keepWarmSwitch": { "title": "Keep Warm switch", "type": "boolean", "default": true },
+          "delayStartSwitch": {
+            "title": "Delay Start switch (uses the kettle's own timer)",
+            "type": "boolean",
+            "default": false,
+            "description": "Tip: for schedules you can also use a Home app automation that turns the kettle to Heat at a time of day."
+          },
+          "presets": {
+            "title": "Preset switches",
+            "type": "object",
+            "properties": {
+              "boil": { "title": "Boil (212°F)", "type": "boolean", "default": true },
+              "greenTea": { "title": "Green Tea (180°F)", "type": "boolean", "default": false },
+              "oolong": { "title": "Oolong (195°F)", "type": "boolean", "default": false },
+              "coffee": { "title": "Coffee (205°F)", "type": "boolean", "default": false },
+              "myBrew": { "title": "MyBrew (kettle's stored temperature)", "type": "boolean", "default": false }
+            }
+          }
+        }
+      },
+      "dbusAddress": {
+        "title": "D-Bus address",
+        "type": "string",
+        "default": "auto",
+        "description": "\"auto\" uses /run/dbus-host/system_bus_socket when mounted (Docker), otherwise the system bus. Or give a socket path / unix:path=… address."
+      },
+      "adapter": {
+        "title": "Bluetooth adapter",
+        "type": "string",
+        "placeholder": "hci0",
+        "description": "Leave empty for the default adapter."
+      },
+      "protocolVersion": {
+        "title": "Protocol version",
+        "type": "string",
+        "default": "auto",
+        "oneOf": [
+          { "title": "Auto-detect from firmware (recommended)", "enum": ["auto"] },
+          { "title": "V0 (older firmware)", "enum": ["0"] },
+          { "title": "V1", "enum": ["1"] }
+        ]
+      },
+      "debug": {
+        "title": "Debug logging (logs every Bluetooth frame)",
+        "type": "boolean",
+        "default": false
+      }
+    }
+  },
+  "layout": [
+    "name",
+    "mac",
+    "registrationKey",
+    {
+      "type": "fieldset",
+      "title": "Connection",
+      "expandable": true,
+      "items": ["connectionMode", "pollInterval", "onDemandPollInterval", "idleDisconnect"]
+    },
+    {
+      "type": "fieldset",
+      "title": "HomeKit",
+      "expandable": true,
+      "items": [
+        "temperatureUnit",
+        "keepWarmMinutes",
+        "accessories.onBaseSensor",
+        "accessories.keepWarmSwitch",
+        "accessories.delayStartSwitch",
+        "delayStartMinutes",
+        "accessories.presets.boil",
+        "accessories.presets.greenTea",
+        "accessories.presets.oolong",
+        "accessories.presets.coffee",
+        "accessories.presets.myBrew"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Advanced",
+      "expandable": true,
+      "expanded": false,
+      "items": ["dbusAddress", "adapter", "protocolVersion", "debug"]
+    }
+  ]
+}
