@@ -228,5 +228,5 @@ export const OWN_KETTLE_FRAMES = {
    * MyBrew 140 °F. App showed "Hold Temp: On, 30 min": [23] = 01 and [24–25] = 08 07 (1800 s) while
    * the active-hold fields [10–13] are zero.
    */
-  extendedIdleHoldDefault30: 'a512011d00da0140400000 00b47d8c0000000000000000000000000000000001080700 0101'.replace(/ /g, ''),
+  extendedIdleHoldDefault30: 'a5 12 01 1d 00 da 01 40 40 00 00 00 b4 7d 8c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 08 07 00 01 01',
 };
