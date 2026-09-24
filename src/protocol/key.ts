@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { Cmd, CmdClass, FrameType, REGISTRATION_KEY_BYTES } from './constants.js';
 import { FrameParser, fromHex, type Frame } from './frame.js';
+import { extractAttPdus, parsePklgRecords } from './pklg.js';
 
 const KEY_HEX_RE = /^[0-9a-f]{32}$/;
 
@@ -120,35 +121,22 @@ export interface LogScanResult {
   handshakes: CapturedHandshake[];
   writeLines: number;
   notifyLines: number;
+  /** Write lines skipped because only PacketLogger's truncated "Value: …" column was present. */
+  truncatedWrites: number;
 }
 
 /** Trailing run of space-separated 2-digit hex bytes (PacketLogger's raw column). */
 const TRAILING_HEX_RE = /(?:^|\s)((?:[0-9A-Fa-f]{2}[ \t]+)*[0-9A-Fa-f]{2})\s*$/;
 
-/**
- * Find hello/register handshakes in a text export of a PacketLogger (or similar) BLE trace.
- *
- * Every "ATT Send … Write" line's raw bytes are header-stripped and concatenated in order, then run
- * through the frame parser, which reassembles the chunked 42-byte frame and verifies its checksum.
- * Kettle notifications are parsed the same way to find the ACK (status 00 = key accepted).
- */
-export function findHandshakesInLog(text: string): LogScanResult {
-  const tx: Buffer[] = [];
-  const rx: Buffer[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const isWrite = /ATT\s+Send/i.test(line) && /Write\s+(Request|Command)/i.test(line);
-    const isNotify = /ATT\s+Receive/i.test(line) && /(Notification|Indication)/i.test(line);
-    if (!isWrite && !isNotify) {
-      continue;
-    }
-    const match = TRAILING_HEX_RE.exec(line);
-    if (!match) {
-      continue;
-    }
-    const value = stripAttHeader(fromHex(match[1]!));
-    (isWrite ? tx : rx).push(value);
-  }
+const WRITE_OPCODES: ReadonlySet<number> = new Set([0x12, 0x52]);
+const NOTIFY_OPCODES: ReadonlySet<number> = new Set([0x1b, 0x1d]);
 
+/**
+ * Core matcher: `tx` are the values written to the kettle in order, `rx` the notification values.
+ * The writes are concatenated and run through the frame parser, which reassembles the chunked 42-byte
+ * hello and verifies its checksum; the kettle's ACK (same seq) gives the accept/reject status.
+ */
+function findHandshakesInValues(tx: Buffer[], rx: Buffer[]): CapturedHandshake[] {
   const acks = new FrameParser().push(Buffer.concat(rx)).filter((f) => f.frameType === FrameType.ACK
     && f.payload[2] === CmdClass.AUTH
     && (f.payload[1] === Cmd.HELLO || f.payload[1] === Cmd.REGISTER));
@@ -164,5 +152,46 @@ export function findHandshakesInLog(text: string): LogScanResult {
       ackStatus: ack && ack.payload.length >= 5 ? ack.payload[4] : undefined,
     });
   }
-  return { handshakes, writeLines: tx.length, notifyLines: rx.length };
+  return handshakes;
+}
+
+/**
+ * Find hello/register handshakes in a text export of a PacketLogger (or similar) BLE trace.
+ *
+ * Only works when the export includes each packet's raw bytes at the end of the line; exports that
+ * contain only the (truncated) "Value:" column cannot be used — save the trace as .pklg instead.
+ */
+export function findHandshakesInLog(text: string): LogScanResult {
+  const tx: Buffer[] = [];
+  const rx: Buffer[] = [];
+  let truncatedWrites = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const isWrite = /ATT\s+Send/i.test(line) && /Write\s+(Request|Command)/i.test(line);
+    const isNotify = /ATT\s+Receive/i.test(line) && /(Notification|Indication)/i.test(line);
+    if (!isWrite && !isNotify) {
+      continue;
+    }
+    const match = TRAILING_HEX_RE.exec(line);
+    if (!match) {
+      if (isWrite && line.includes('…')) {
+        truncatedWrites++;
+      }
+      continue;
+    }
+    const value = stripAttHeader(fromHex(match[1]!));
+    (isWrite ? tx : rx).push(value);
+  }
+  return { handshakes: findHandshakesInValues(tx, rx), writeLines: tx.length, notifyLines: rx.length, truncatedWrites };
+}
+
+/** Find hello/register handshakes in a PacketLogger `.pklg` capture (complete packet bytes). */
+export function findHandshakesInPklg(buf: Buffer): LogScanResult {
+  const records = parsePklgRecords(buf);
+  if (!records) {
+    throw new Error('not a valid PacketLogger .pklg file');
+  }
+  const pdus = extractAttPdus(records);
+  const tx = pdus.filter((p) => p.direction === 'tx' && WRITE_OPCODES.has(p.opcode)).map((p) => p.value);
+  const rx = pdus.filter((p) => p.direction === 'rx' && NOTIFY_OPCODES.has(p.opcode)).map((p) => p.value);
+  return { handshakes: findHandshakesInValues(tx, rx), writeLines: tx.length, notifyLines: rx.length, truncatedWrites: 0 };
 }

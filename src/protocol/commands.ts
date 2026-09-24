@@ -73,17 +73,17 @@ export function setHoldPayload(version: ProtocolVersion, holdSeconds: number): B
 
 export interface SetModeOptions {
   /**
-   * Byte [5]. Real app captures send 0x00 for presets (e.g. coffee `…F0 A3 00 03 00 00 00 00`);
-   * ha-cosori-kettle sends the target °F; barrymichels (V0) sends the target °F.
-   * Default: 0x00 for presets, the target temperature for MyBrew / V0 heat. Flagged for on-device
-   * verification (probe `start --temp-byte`).
+   * Byte [5]. The VeSync app sends 0x00 for presets (verified: coffee `…F0 A3 00 03 00 00 00 00`,
+   * green tea `…F0 A3 00 01 00 01 08 07`); ha-cosori-kettle and barrymichels (V0) send the target °F.
+   * Default: 0x00 for presets, the target temperature for MyBrew / V0 heat.
    */
   tempF?: number;
   /** Keep-warm after reaching temperature, seconds (0 = off). */
   holdSeconds?: number;
   /**
-   * Byte order of the hold field. Captures, barrymichels' V0 code and every other 16-bit field on the
-   * wire are little-endian; ha-cosori-kettle currently sends big-endian. Default 'le'; verify on device.
+   * Byte order of the hold field. Little-endian, verified from a VeSync-app capture (Green Tea, 30 min
+   * hold → `01 00 01 08 07`, 0x0708 = 1800 s). ha-cosori-kettle sends big-endian, which is wrong.
+   * 'be' exists only for diagnostics.
    */
   holdByteOrder?: ByteOrder;
 }

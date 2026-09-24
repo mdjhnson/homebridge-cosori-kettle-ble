@@ -5,3 +5,4 @@ export * from './commands.js';
 export * from './status.js';
 export * from './key.js';
 export * from './version.js';
+export * from './pklg.js';

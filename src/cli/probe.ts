@@ -14,7 +14,8 @@ import { NodeBleTransport, resolveDbusAddress, type ScanResult, type WriteMode }
 import { InvalidRegistrationKeyError, NotInPairingModeError } from '../kettle/errors.js';
 import { describeCompletion, KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
 import {
-  ADVERTISED_NAME, ETEKCITY_COMPANY_ID, findHandshakesInLog, generateKey, keyFromHelloPackets, keyToHex, MAX_HOLD_SECONDS, Mode, MODE_NAMES, parseKey,
+  ADVERTISED_NAME, type CapturedHandshake, ETEKCITY_COMPANY_ID, findHandshakesInLog, findHandshakesInPklg, generateKey,
+  keyFromHelloPackets, keyToHex, type LogScanResult, looksLikePklg, MAX_HOLD_SECONDS, Mode, MODE_NAMES, parseKey,
   PRESET_TEMP_F, ProtocolVersion, STAGE_NAMES, toHex,
 } from '../protocol/index.js';
 import { delay, errorMessage } from '../util/async.js';
@@ -28,7 +29,7 @@ Usage: cosori-probe <command> [args] [options]
 Read-only:
   scan                         Scan for BLE devices (Cosori kettles highlighted; --all shows everything)
   info <mac>                   Connect, read device info / firmware, detect protocol version, show GATT flags
-  key-from-log <file>          Find the VeSync app's registration key in a PacketLogger text export (offline)
+  key-from-log <file>          Find the VeSync app's registration key in a PacketLogger capture (.pklg, or text export) (offline)
   key-from-packets <p1> <p2> <p3>
                                Recover the key from the 3 hello writes, pasted as hex (offline)
   status <mac>                 Hello with --key, poll once, print decoded status
@@ -278,38 +279,57 @@ function cmdKeyFromPackets(packets: string[]): void {
 
 function cmdKeyFromLog(file: string | undefined): void {
   if (!file) {
-    throw new UsageError('pass the path of a PacketLogger text export (File → Export… as text)');
+    throw new UsageError('pass the path of a PacketLogger capture: the saved .pklg file (preferred) or a text export');
   }
-  let text: string;
+  let data: Buffer;
   try {
-    text = readFileSync(file, 'utf8');
+    data = readFileSync(file);
   } catch (err) {
     throw new UsageError(`cannot read ${file}: ${errorMessage(err)}`);
   }
-  if (text.slice(0, 4096).includes('\u0000')) {
-    throw new UsageError(`${file} looks binary (a .pklg file?). In PacketLogger use File → Export… and save as text.`);
+
+  let result: LogScanResult;
+  if (looksLikePklg(data)) {
+    console.log(`${file}: PacketLogger capture (.pklg)`);
+    result = findHandshakesInPklg(data);
+  } else if (data.subarray(0, 4096).includes(0)) {
+    throw new UsageError(`${file} is a binary file but not a PacketLogger .pklg capture`);
+  } else {
+    console.log(`${file}: text export`);
+    result = findHandshakesInLog(data.toString('utf8'));
   }
-  const result = findHandshakesInLog(text);
-  console.log(`Scanned ${result.writeLines} ATT write line(s) and ${result.notifyLines} notification line(s).`);
+  console.log(`Scanned ${result.writeLines} ATT write(s) and ${result.notifyLines} notification(s).`);
+
   if (result.handshakes.length === 0) {
-    const why = result.writeLines === 0
-      ? 'No "ATT Send … Write Request" lines with raw hex bytes were found. Check the export includes the raw packet bytes, '
-        + 'and that the trace covers the moment the VeSync app connected to the kettle.'
-      : 'Writes were found but none formed a valid hello/register frame. The capture may have started after the app connected: '
+    let why: string;
+    if (result.truncatedWrites > 0) {
+      why = `This text export only contains PacketLogger's truncated "Value: …" column (${result.truncatedWrites} write(s) cut off), `
+        + 'so the full key is not in the file. In PacketLogger use File → Save (or Save As…) to save the trace as a .pklg file, '
+        + 'then run key-from-log on that .pklg file.';
+    } else if (result.writeLines === 0) {
+      why = 'No writes to the kettle were found. Make sure the trace covers the moment the VeSync app connected to the kettle.';
+    } else {
+      why = 'Writes were found but none formed a valid hello/register frame. The capture may have started after the app connected: '
         + 'force-quit the app, start a new trace, then open the app again.';
+    }
     throw new Error(`no registration handshake found. ${why}`);
   }
-  const unique = new Map<string, typeof result.handshakes[number]>();
+  const unique = new Map<string, CapturedHandshake>();
   for (const h of result.handshakes) {
-    unique.set(keyToHex(h.key), h);
+    const hex = keyToHex(h.key);
+    const prev = unique.get(hex);
+    if (!prev || (prev.ackStatus === undefined && h.ackStatus !== undefined)) {
+      unique.set(hex, h);
+    }
   }
   for (const [key, h] of unique) {
     const verdict = h.ackStatus === undefined
-      ? 'kettle reply not in the log (key not yet confirmed — test it with `status`)'
+      ? 'kettle reply not in the capture (key not yet confirmed — test it with `status`)'
       : h.ackStatus === 0
         ? 'kettle ACCEPTED it (status 00)'
         : `kettle REJECTED it (status 0x${h.ackStatus.toString(16).padStart(2, '0')})`;
-    console.log(`\n${h.command === 'hello' ? 'Hello' : 'Register'} (protocol V${h.protocolVersion}, seq ${h.seq}) → ${verdict}`);
+    const count = result.handshakes.filter((x) => keyToHex(x.key) === key).length;
+    console.log(`\n${h.command === 'hello' ? 'Hello' : 'Register'} ×${count} (protocol V${h.protocolVersion}) → ${verdict}`);
     console.log(`Registration key: ${key}`);
   }
   if (unique.size > 1) {

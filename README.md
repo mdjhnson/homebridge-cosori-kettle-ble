@@ -145,15 +145,15 @@ Reusing the app's key keeps the VeSync app working with the kettle. You record a
 3. **Force-quit the VeSync app** so its next connection, and the key it sends, is captured from the start. Also make sure nothing else is connected to the kettle; the probe disconnects when it exits.
 4. **Plug the iPhone into the Mac, unlock it and tap *Trust*.** In PacketLogger, choose *File → New iOS Trace*. Packets start scrolling.
 5. **Open the VeSync app and open the kettle** until it shows the live temperature.
-6. **Stop the trace, then export it as text** (*File → Export…*, choosing a text format).
-7. **Run the probe on the export.** On the Mac, from a clone of this repo after `npm install`, run `node dist/cli/probe.js key-from-log ~/Desktop/kettle.txt`; on the Pi, run `cosori-probe key-from-log …`:
+6. **Stop the trace and save it as a `.pklg` file** (*File → Save* / *Save As…*, e.g. `~/Desktop/kettle.pklg`). Use PacketLogger's own format, not a text export: text exports may contain only the truncated "Value: …" column, and then the full key is not in the file.
+7. **Run the probe on the capture.** On the Mac, from a clone of this repo after `npm install`, run `node dist/cli/probe.js key-from-log ~/Desktop/kettle.pklg`; on the Pi, run `cosori-probe key-from-log …`:
 
    ```
    Hello (protocol V1, seq 4) → kettle ACCEPTED it (status 00)
    Registration key: 7f868962cde056b60b5403433ad42bdc
    ```
 
-   It finds the three hello writes on its own, strips PacketLogger's per-packet headers, checks the frame checksum, and reads the kettle's reply to confirm the key was accepted.
+   It reads the capture's Bluetooth ACL packets, reassembles the app's three-part hello, checks the frame checksum, and reads the kettle's reply to confirm the key was accepted. Text exports that include raw packet bytes also work.
 
 **Picking the packets by hand (optional).** The handshake is three consecutive *ATT Send → Write Request, Handle 0x000E* packets, sent right after connecting:
 - the first value starts `A5 22 xx 24 00` and is 20 bytes
@@ -195,7 +195,7 @@ docker exec -it homebridge cosori-probe <command> [args] [options]
 |---|---|---|
 | `scan [--all] [--duration 10]` | no | List nearby kettles, matched by name or Etekcity manufacturer ID, with MAC and RSSI |
 | `info <mac>` | no | Connect, read model/firmware (Device Information Service), detect protocol version, show GATT flags |
-| `key-from-log <file>` | — (offline) | Find and verify the app's key in a PacketLogger text export |
+| `key-from-log <file>` | — (offline) | Find and verify the app's key in a PacketLogger capture (`.pklg`, or a text export with raw bytes) |
 | `key-from-packets <p1> <p2> <p3>` | — (offline) | Extract the key from the three hello writes, pasted as hex |
 | `status <mac> --key K` | hello + poll | Verify the key, print one decoded status |
 | `watch <mac> --key K [--interval 2]` | hello + polls | Live status until Ctrl-C |
@@ -248,7 +248,8 @@ These notes are based on the reverse-engineering work in the projects listed und
 - **Framing:** `A5 | type | seq | len_lo | len_hi | checksum | payload`. Type `0x22` is used for commands, and for status and completion frames the kettle sends on its own. Type `0x12` is used for ACKs and the extended status.
 - **Checksum:** start at 0 and subtract every byte of the frame, treating the checksum byte itself as `0x01`, then take the result mod 256. This single rule matches every capture, for both V0 and V1. The "sum of header bytes" formula in upstream docs does not match real traffic.
 - **Handshake:** first-time pairing is register (`80 D1`) followed by hello (`81 D1`). After that, hello alone. The key is sent as 32 ASCII hex characters. On first pairing, hello must not be sent before register.
-- **16-bit fields are little-endian:** this covers the hold time in F2 and in the status frames, and the F1 delay. The hold field in F0 (start) is little-endian in captures but big-endian in one upstream library; it is flagged for on-device verification (`start … --hold-min 5`, with or without `--hold-be`).
+- **16-bit fields are little-endian:** this covers the hold time in F2, F0 (start) and the status frames, and the F1 delay. One upstream library sends F0's hold big-endian. A capture of the VeSync app starting Green Tea with a 30-minute hold settles it: `01 F0 A3 00 01 00 01 08 07` is `0x0708` = 1800 s, so the field is little-endian. The app also sends `00` in F0's temperature byte for presets.
+- **ACKs to F0 (start) and F3 (set MyBrew) have no status byte.** Only register and hello replies carry one.
 - **Extended status offsets** (payload): `[4]` stage, `[5]` mode, `[6]` setpoint °F, `[7]` current temperature °F, `[8]` MyBrew °F, `[10–11]` configured hold (LE), `[12–13]` remaining hold (LE), `[14]` on-base (`00` = on base), `[26]` baby-formula mode.
 - All temperatures on the wire are °F. The setpoint range is 104–212 °F; readings outside 40–230 °F are discarded.
 

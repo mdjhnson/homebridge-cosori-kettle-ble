@@ -93,6 +93,6 @@ describe('findHandshakesInLog', () => {
 
   it('returns nothing (with counts) for a log without the handshake', () => {
     const result = findHandshakesInLog('Jan 04 08:02:40.512  HCI Event  LE Connection Complete\nsomething else');
-    expect(result).toEqual({ handshakes: [], writeLines: 0, notifyLines: 0 });
+    expect(result).toEqual({ handshakes: [], writeLines: 0, notifyLines: 0, truncatedWrites: 0 });
   });
 });

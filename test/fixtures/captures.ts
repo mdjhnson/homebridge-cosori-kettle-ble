@@ -208,3 +208,19 @@ export const PACKETLOGGER_EXPORT = [
   'Jan 04 08:02:51.209  ATT Receive      0x0405  00:00:00:00:00:00  Handle Value Notification - Handle:0x0010 - Value: A522 6A0C 00E7 0141 4000 0000 B4A5…  '
     + '05 04 19 00 15 00 04 00 1B 10 00 A5 22 6A 0C 00 E7 01 41 40 00 00 00 B4 A5 00 00 00 00',
 ].join('\n');
+
+/**
+ * Frames captured from the maintainer's own kettle (HW 1.0.00 / SW R0007V0012, VeSync iOS app,
+ * PacketLogger, 2026-09-23). Complete (non-truncated) values only; the registration key is omitted.
+ */
+export const OWN_KETTLE_FRAMES = {
+  /** App "Start" on Green Tea with "Hold Temp: 30 min": hold 08 07 → 1800 s little-endian; byte[5] = 00. */
+  startGreenTeaHold30: 'A5220309008701F0A3000100010807',
+  /** App poll (seq 1). */
+  poll: 'A522010400B201404000',
+  /** Kettle ACKs to the app's two hellos (seq 0 and 2): status 00 = accepted. */
+  helloAckSeq0: 'A512000500F00181D10000',
+  helloAckSeq2: 'A512020500EE0181D10000',
+  /** Kettle ACK to F0 start: 4-byte payload, no status byte. */
+  startAck: 'A512030400AD01F0A300',
+};
