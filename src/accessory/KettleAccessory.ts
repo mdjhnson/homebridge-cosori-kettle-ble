@@ -23,6 +23,11 @@ import {
   TemperatureSmoother,
 } from './mapping.js';
 
+/** Names the Home app assigns by itself: the service type, optionally followed by a number. */
+export function isHomeAppDefaultName(name: string): boolean {
+  return /^(Switch|Occupancy Sensor|Thermostat|Kettle)( \d+)?$/.test(name.trim());
+}
+
 interface KettleContext {
   mac: string;
   /** Last target temperature chosen in HomeKit (°F). */
@@ -61,6 +66,7 @@ export class KettleAccessory {
     // --- Thermostat -----------------------------------------------------------------------------
     this.thermostat = accessory.getService(S.Thermostat) ?? accessory.addService(S.Thermostat, config.name);
     this.thermostat.setPrimaryService(true);
+    this.applyName(this.thermostat, config.name);
     this.thermostat.getCharacteristic(C.CurrentHeatingCoolingState)
       .onGet(() => this.read((s) => (s.active ? C.CurrentHeatingCoolingState.HEAT : C.CurrentHeatingCoolingState.OFF)));
     this.thermostat.getCharacteristic(C.TargetHeatingCoolingState)
@@ -147,8 +153,13 @@ export class KettleAccessory {
   // ---------------------------------------------------------------------------------------------
   // SET handlers
 
+  /**
+   * Refuse commands up front (HomeKit shows "No Response") when they cannot succeed soon: the key was
+   * rejected, or the link has been down long enough that this is not just a quick reconnect.
+   */
   private assertCanCommand(): void {
-    if (this.manager.registrationKeyRejected) {
+    if (this.manager.registrationKeyRejected || this.manager.unreachableForMs() > 15_000) {
+      this.log.warn(`${this.config.name}: not reachable right now; command refused`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
@@ -301,7 +312,6 @@ export class KettleAccessory {
 
   /** Add (or keep) a named sub-service when enabled; remove a cached one when disabled. */
   private optionalService(enabled: boolean, type: WithUUID<typeof Service>, subtype: string, name: string): Service | undefined {
-    const { Characteristic: C } = this.api.hap;
     const existing = this.accessory.getServiceById(type, subtype);
     if (!enabled) {
       if (existing) {
@@ -310,12 +320,25 @@ export class KettleAccessory {
       return undefined;
     }
     const svc = existing ?? this.accessory.addService(type, name, subtype);
+    this.applyName(svc, name);
+    return svc;
+  }
+
+  /**
+   * Set Name and ConfiguredName. The Home app shows ConfiguredName and, when a bridge is added, may overwrite
+   * it with generic defaults ("Switch 3", "Occupancy Sensor"). Restore ours in that case, but keep any name
+   * the user chose.
+   */
+  private applyName(svc: Service, name: string): void {
+    const { Characteristic: C } = this.api.hap;
     svc.setCharacteristic(C.Name, name);
     if (!svc.testCharacteristic(C.ConfiguredName)) {
       svc.addOptionalCharacteristic(C.ConfiguredName);
-      svc.setCharacteristic(C.ConfiguredName, name);
     }
-    return svc;
+    const current = svc.getCharacteristic(C.ConfiguredName).value;
+    if (typeof current !== 'string' || current.trim() === '' || isHomeAppDefaultName(current)) {
+      svc.updateCharacteristic(C.ConfiguredName, name);
+    }
   }
 }
 

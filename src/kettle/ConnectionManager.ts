@@ -60,6 +60,8 @@ export class ConnectionManager extends EventEmitter<Events> {
   private keyRejected = false;
   private consecutiveConnectFailures = 0;
   private everConnected = false;
+  /** When the link was last lost (or the manager started without a link); 0 while connected. */
+  private downSince = Date.now();
   private readonly waiters = new Set<{ resolve: () => void; reject: (err: Error) => void }>();
 
   constructor(private readonly client: KettleClient, private readonly options: ConnectionManagerOptions) {
@@ -91,6 +93,20 @@ export class ConnectionManager extends EventEmitter<Events> {
 
   get deviceInfo(): DeviceInfo {
     return this.client.deviceInfo;
+  }
+
+  /**
+   * How long the kettle has been unreachable, in ms (0 while connected). In on-demand mode being
+   * disconnected is normal, so this is 0 unless the most recent connection attempt failed.
+   */
+  unreachableForMs(now = Date.now()): number {
+    if (this.ready) {
+      return 0;
+    }
+    if (this.options.mode === 'onDemand' && this.consecutiveConnectFailures === 0) {
+      return 0;
+    }
+    return this.everConnected || this.consecutiveConnectFailures > 0 ? now - this.downSince : 0;
   }
 
   get registrationKeyRejected(): boolean {
@@ -184,6 +200,7 @@ export class ConnectionManager extends EventEmitter<Events> {
       return;
     }
     this.ready = ready;
+    this.downSince = ready ? 0 : Date.now();
     this.emit('connection', ready);
     if (ready) {
       for (const w of this.waiters) {

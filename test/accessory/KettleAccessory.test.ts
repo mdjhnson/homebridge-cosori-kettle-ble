@@ -116,6 +116,29 @@ describe('KettleAccessory services', () => {
     expect(warnings).toEqual([]);
   });
 
+  it('restores names the Home app overwrote with defaults, but keeps names the user chose', async () => {
+    const accessory = newAccessory();
+    const first = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    const cfg = config({ accessories: { presets: { coffee: true } } });
+    new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, first);
+    // Simulate the Home app renaming during pairing, and the user renaming one tile.
+    accessory.getServiceById(S.Switch, 'preset-boil')!.updateCharacteristic(C.ConfiguredName, 'Switch');
+    accessory.getServiceById(S.Switch, 'keep-warm')!.updateCharacteristic(C.ConfiguredName, 'Switch 2');
+    accessory.getServiceById(S.Switch, 'preset-coffee')!.updateCharacteristic(C.ConfiguredName, 'Morning Coffee');
+    accessory.getServiceById(S.OccupancySensor, 'on-base')!.updateCharacteristic(C.ConfiguredName, 'Occupancy Sensor');
+    // Restart: a new accessory handler on the same (cached) accessory.
+    new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, first);
+    const name = (svc: { getCharacteristic: (c: typeof C.ConfiguredName) => { value: unknown } } | undefined) =>
+      svc!.getCharacteristic(C.ConfiguredName).value;
+    expect(name(accessory.getServiceById(S.Switch, 'preset-boil'))).toBe('Boil');
+    expect(name(accessory.getServiceById(S.Switch, 'keep-warm'))).toBe('Keep Warm');
+    expect(name(accessory.getServiceById(S.Switch, 'preset-coffee'))).toBe('Morning Coffee');
+    expect(name(accessory.getServiceById(S.OccupancySensor, 'on-base'))).toBe('On Base');
+    expect(name(accessory.getService(S.Thermostat))).toBe('Kettle');
+  });
+
   it('thermostat range is 40–100 °C with 0.5 °C steps and OFF/HEAT only', async () => {
     const { thermostat } = await setup();
     const props = thermostat().getCharacteristic(C.TargetTemperature).props;
@@ -190,6 +213,25 @@ describe('KettleAccessory commands', () => {
     const { thermostat, sentCmds } = await setup();
     await thermostat().getCharacteristic(C.TargetHeatingCoolingState).handleSetRequest(C.TargetHeatingCoolingState.OFF);
     await new Promise((r) => setTimeout(r, 50));
+    expect(sentCmds()).toEqual([]);
+  });
+
+  it('refuses commands immediately when the kettle has been unreachable for a while', async () => {
+    const { fake, manager, thermostat, sentCmds } = await setup();
+    fake.connectError = new Error('not found while scanning');
+    fake.drop();
+    await until(() => !manager.connected);
+    expect(manager.unreachableForMs()).toBeLessThan(15_000);
+    expect(manager.unreachableForMs(Date.now() + 20_000)).toBeGreaterThan(15_000);
+    // Within the grace period a tap is queued; past it, it is refused up front.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 20_000;
+    try {
+      await expect(thermostat().getCharacteristic(C.TargetHeatingCoolingState).handleSetRequest(C.TargetHeatingCoolingState.HEAT))
+        .rejects.toBe(hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    } finally {
+      Date.now = realNow;
+    }
     expect(sentCmds()).toEqual([]);
   });
 
