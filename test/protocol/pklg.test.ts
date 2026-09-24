@@ -115,6 +115,17 @@ describe('frames from the maintainer\'s kettle (HW 1.0.00 / SW R0007V0012)', () 
     expect(decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.startAck))!)).toEqual({ kind: 'ack', command: 0xf0, status: undefined });
   });
 
+  it('decodes an idle extended status read by the plugin', () => {
+    const frame = parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedIdleHoldDefault30))!;
+    expect(frame.payload).toHaveLength(29);
+    expect(decodeMessage(frame)).toEqual({
+      kind: 'extended', stage: 0, mode: 0, setpointF: 180, tempF: 125, myTempF: 140,
+      configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+    });
+    // Saved "Hold Temp" duration from the app (30 min) lives at [24–25], little-endian.
+    expect(frame.payload.readUInt16LE(24)).toBe(1800);
+  });
+
   it('app poll matches our poll builder', () => {
     expect(buildFrame(0x22, 0x01, Buffer.from([0x01, 0x40, 0x40, 0x00]))).toEqual(fromHex(OWN_KETTLE_FRAMES.poll));
     expect(splitIntoChunks(fromHex(OWN_KETTLE_FRAMES.poll))).toHaveLength(1);

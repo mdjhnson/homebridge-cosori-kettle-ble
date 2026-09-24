@@ -223,4 +223,10 @@ export const OWN_KETTLE_FRAMES = {
   helloAckSeq2: 'A512020500EE0181D10000',
   /** Kettle ACK to F0 start: 4-byte payload, no status byte. */
   startAck: 'A512030400AD01F0A300',
+  /**
+   * Extended status via the plugin (cosori-probe watch), idle on base at 125 °F, setpoint 180 °F,
+   * MyBrew 140 °F. App showed "Hold Temp: On, 30 min": [23] = 01 and [24–25] = 08 07 (1800 s) while
+   * the active-hold fields [10–13] are zero.
+   */
+  extendedIdleHoldDefault30: 'a512011d00da0140400000 00b47d8c0000000000000000000000000000000001080700 0101'.replace(/ /g, ''),
 };
