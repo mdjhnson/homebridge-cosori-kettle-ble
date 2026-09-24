@@ -229,4 +229,10 @@ export const OWN_KETTLE_FRAMES = {
    * the active-hold fields [10–13] are zero.
    */
   extendedIdleHoldDefault30: 'a5 12 01 1d 00 da 01 40 40 00 00 00 b4 7d 8c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 08 07 00 01 01',
+  /** Pushed by the kettle the moment it was lifted: compact status with [9] = 01 (off-base, hypothesis). */
+  compactLiftedOffBase: 'a5 22 44 0c 00 3c 01 41 40 00 00 00 b4 75 00 01 00 00',
+  /** Next poll after lifting: extended [14] = 01 (off base). */
+  extendedOffBase: 'a5 12 0c 1d 00 d6 01 40 40 00 00 00 b4 75 8c 00 00 00 00 00 01 00 00 00 00 00 00 00 00 01 08 07 00 01 01',
+  /** Back on base. */
+  extendedBackOnBase: 'a5 12 01 1d 00 e2 01 40 40 00 00 00 b4 75 8c 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 08 07 00 01 01',
 };

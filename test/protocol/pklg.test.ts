@@ -126,6 +126,14 @@ describe('frames from the maintainer\'s kettle (HW 1.0.00 / SW R0007V0012)', () 
     expect(frame.payload.readUInt16LE(24)).toBe(1800);
   });
 
+  it('lift test: pushed compact frame, then extended on-base false, then true again', () => {
+    const lifted = parseFrame(fromHex(OWN_KETTLE_FRAMES.compactLiftedOffBase))!;
+    expect(decodeMessage(lifted)).toEqual({ kind: 'compact', stage: 0, mode: 0, setpointF: 180, tempF: 117 });
+    expect(lifted.payload[9]).toBe(0x01);
+    expect(decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedOffBase))!)).toMatchObject({ kind: 'extended', onBase: false, tempF: 117 });
+    expect(decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedBackOnBase))!)).toMatchObject({ kind: 'extended', onBase: true });
+  });
+
   it('app poll matches our poll builder', () => {
     expect(buildFrame(0x22, 0x01, Buffer.from([0x01, 0x40, 0x40, 0x00]))).toEqual(fromHex(OWN_KETTLE_FRAMES.poll));
     expect(splitIntoChunks(fromHex(OWN_KETTLE_FRAMES.poll))).toHaveLength(1);
