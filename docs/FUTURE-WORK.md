@@ -24,6 +24,39 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 - HomeKit has no generic dropdown characteristic, and Thermostat modes are limited to Off/Heat/Cool/Auto.
 - Also reconsider the defaults: thermostat + Keep Warm + On Base, with Delay Start and presets opt-in.
 
+## 2b. User-defined temperature switches (replaces the fixed preset toggles)
+
+**Request (maintainer):** in the plugin settings, the user adds a list of **"items" that each show up as a switch**. Each item has a **name** and a **temperature**. The list comes **prefilled** with the kettle's own presets, and the user can edit, delete or add entries.
+
+**Proposed config** (`config.schema.json` array, rendered as an add/remove list in the Homebridge UI):
+
+```json
+"switches": [
+  { "name": "Green Tea", "temperature": 180 },
+  { "name": "Oolong",    "temperature": 195 },
+  { "name": "Coffee",    "temperature": 205 },
+  { "name": "Boil",      "temperature": 212 }
+]
+```
+
+- **Fields per item:**
+  - `name` (required; HAP-safe characters only, validated).
+  - `temperature`, in the `temperatureUnit` (F: 104–212, C: 40–100).
+  - Optional `keepWarmMinutes` to override the global keep-warm setting for this item (0 = no hold).
+- **Behaviour:**
+  - **On** heats to that temperature. If the temperature is one of the kettle's presets, it uses that preset (F0). Otherwise it stores the temperature as MyBrew and heats in MyBrew mode (F3, then F0 mode 5).
+  - **The switch shows On** while the kettle is heating to that item's temperature (the setpoint matches, within ±1 °F). **Off** stops the kettle.
+  - **Caveat to document:** non-preset items overwrite the MyBrew temperature stored on the kettle, which the VeSync app's MyBrew button uses.
+- **Stable identity:**
+  - Derive each HAP subtype from a hidden, generated `id` per item, not from the name or position. Renaming or reordering items then won't create new tiles in the Home app.
+  - Remove tiles whose item was deleted.
+- **Migration:** when `accessories.presets` exists, translate its enabled flags into `switches` entries and warn once. Then drop the old option.
+- **Reference note** in the settings form (a help block under the list) and in the README, so users can recreate a deleted preset:
+
+  > **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. MyBrew uses the temperature stored on the kettle (set in the VeSync app, or by any non-preset switch). Any other temperature from 104–212 °F (40–100 °C) also works.
+
+- **Tests:** schema defaults, validation (range, names), migration, subtype stability across rename and reorder, preset vs MyBrew command selection, switch On/Off state from status.
+
 ## 3. Radio robustness
 
 - A Pi 4 in an aluminium Argon ONE case, with a USB 3 SSD attached, can't hear below about -80 dBm, and the kettle sits right at the edge. **Fix:** a USB Bluetooth 5 adapter on the RTL8761BU chip (TP-Link UB500 / ASUS USB-BT500), on a USB 2.0 port with an extension cable. Its firmware is already on the Pi. Use `adapter: "hci1"`, or `dtoverlay=disable-bt`.

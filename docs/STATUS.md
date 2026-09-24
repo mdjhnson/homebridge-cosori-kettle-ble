@@ -33,4 +33,4 @@ _Last updated: 2026-09-23 (evening, US Central)._
 1. Diagnose open issue 1 (above) with the user present.
 2. Deploy `f8ff1ac` by restarting the child bridge only; confirm the tile names are restored.
 3. Finish the Checkpoint C list: heat and off via the dial, a preset, Keep Warm holding after the heat finishes, Delay Start on and off, and On Base.
-4. Decide the tile layout (FUTURE-WORK: preset selector and default switches).
+4. Decide the tile layout: FUTURE-WORK §2 (preset selector, default switches) and §2b (user-defined temperature switches in the config, prefilled with the kettle presets).
