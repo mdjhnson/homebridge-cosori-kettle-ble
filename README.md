@@ -116,7 +116,7 @@ git clone https://github.com/mdjhnson/homebridge-cosori-kettle-ble.git
 cd homebridge-cosori-kettle-ble
 npm install
 npm pack                                  # → homebridge-cosori-kettle-ble-0.1.0.tgz
-scp homebridge-cosori-kettle-ble-0.1.0.tgz argonpi:/tmp/
+scp homebridge-cosori-kettle-ble-0.1.0.tgz your-pi:/tmp/
 ```
 
 On the Pi:
