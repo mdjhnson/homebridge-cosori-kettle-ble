@@ -297,6 +297,7 @@ The plugin will offer an **on-demand** connection mode that connects briefly for
 | `kettle rejected the registration key` | Wrong key. Re-capture it (Option A) or pair (Option B). |
 | `not in pairing mode` | Hold the MyBrew button until the kettle signals pairing mode, then retry. |
 | Temperature reads 1–3 °F below the setpoint while holding | Normal kettle behaviour. |
+| `usocket@0.3.0 install` … `gyp ERR! Completion callback never invoked!` in an npm install log (for example when installing or updating any plugin) | Harmless. `usocket` is an optional native dependency of `dbus-next` (via `node-ble`), and its bundled node-gyp 7 can't build on Node 24. npm skips it and the install succeeds. Without it, `dbus-next` connects to the system bus with Node's own `net` socket, which is all this plugin needs. The warning comes back on every npm install in `/homebridge`, and a plugin can't silence it from its own `package.json`. |
 
 ## Protocol notes
 

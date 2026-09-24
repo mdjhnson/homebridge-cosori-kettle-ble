@@ -62,6 +62,7 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 - A Pi 4 in an aluminium Argon ONE case, with a USB 3 SSD attached, can't hear below about -80 dBm, and the kettle sits right at the edge. **Fix:** a USB Bluetooth 5 adapter on the RTL8761BU chip (TP-Link UB500 / ASUS USB-BT500), on a USB 2.0 port with an extension cable. Its firmware is already on the Pi. Use `adapter: "hci1"`, or `dtoverlay=disable-bt`.
 - Connects take 10–40 s partly because BlueZ forgets the kettle about 30 s after disconnect, forcing a rescan. Options: keep discovery primed, or document raising `TemporaryTimeout` in `/etc/bluetooth/main.conf`.
 - On-demand mode is impractical while connects take longer than HomeKit's ~10 s timeout.
+- If the BLE layer gets reworked anyway, prefer a D-Bus/BLE library with no native optional dependencies. That would remove the harmless `usocket` `gyp ERR!` from every npm install log (STATUS open issue 5).
 
 ## 4. Protocol unknowns worth resolving (need captures)
 
