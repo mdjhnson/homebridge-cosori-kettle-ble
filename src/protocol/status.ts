@@ -4,6 +4,7 @@
  * Offsets verified against real captures (see test/fixtures/captures.ts). Note: the upstream
  * PROTOCOL.md tables list hold time at [15–16] big-endian and baby mode at [28]; real captures and
  * ha-cosori-kettle's parser use [10–13] little-endian and [26], which is what we implement.
+ * The delayed-start fields [17–20] were identified on the maintainer's kettle (HW 1.0.00 / SW R0007V0012).
  */
 import {
   Cmd, COMMANDS_WITH_STATUS, FrameType, MAX_SETPOINT_F, MAX_VALID_READING_F, MIN_SETPOINT_F, MIN_VALID_READING_F,
@@ -26,6 +27,10 @@ export interface ExtendedStatus extends KettleState {
   remainingHoldSeconds: number;
   onBase: boolean;
   babyFormula: boolean;
+  /** Delay of the most recent delayed start, seconds ([17–18] LE; retained after it completes or is cancelled). */
+  delaySetSeconds: number;
+  /** Seconds until a scheduled delayed start begins ([19–20] LE); 0 when nothing is scheduled. */
+  delayRemainingSeconds: number;
 }
 
 /** 12-byte payload, `01 41 40 00 …`, pushed unsolicited by the kettle. No on-base information. */
@@ -85,6 +90,8 @@ export function parseExtendedStatus(p: Uint8Array): ExtendedStatus | InvalidMess
     remainingHoldSeconds: p[12]! | (p[13]! << 8),
     onBase: p[14] === 0x00,
     babyFormula: p[26] === 0x01,
+    delaySetSeconds: p[17]! | (p[18]! << 8),
+    delayRemainingSeconds: p[19]! | (p[20]! << 8),
   };
 }
 

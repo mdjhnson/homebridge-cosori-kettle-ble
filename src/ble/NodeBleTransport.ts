@@ -30,7 +30,10 @@ export interface NodeBleTransportOptions {
   adapter?: string;
   /** How long to scan for the kettle when BlueZ doesn't already know it. */
   discoveryTimeoutMs?: number;
+  /** BLE connect timeout (default 30 s; weak links can need 20 s+). */
   connectTimeoutMs?: number;
+  /** GATT service-discovery timeout (default 30 s). */
+  gattTimeoutMs?: number;
   /** GATT write type for FFF2. "auto" prefers write-with-response when the characteristic supports it. */
   writeMode?: WriteMode;
   log?: Logger;
@@ -225,8 +228,8 @@ export class NodeBleTransport extends EventEmitter implements KettleTransport {
     device.on('disconnect', this.onDeviceDisconnect);
 
     try {
-      await withTimeout(device.connect(), this.options.connectTimeoutMs ?? 20_000, 'BLE connect');
-      this.gatt = await withTimeout(device.gatt(), 15_000, 'GATT service discovery');
+      await withTimeout(device.connect(), this.options.connectTimeoutMs ?? 30_000, 'BLE connect');
+      this.gatt = await withTimeout(device.gatt(), this.options.gattTimeoutMs ?? 30_000, 'GATT service discovery');
       const service = await this.gatt.getPrimaryService(SERVICE_UUID).catch(() => {
         throw new Error(`service ${SERVICE_UUID} not found — is ${this.mac} really a Cosori kettle?`);
       });

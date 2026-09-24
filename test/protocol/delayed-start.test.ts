@@ -46,6 +46,26 @@ describe('delayed start (F1)', () => {
     expect(decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.compactAfterCancel))!)).toMatchObject({ kind: 'compact', stage: Stage.IDLE });
   });
 
+  it('plugin-sent F1 matches the builder', () => {
+    expect(commandFrame(0x02, delayedStartPayload(V1, 300, Mode.GREEN_TEA, { holdSeconds: 1800 }))).toEqual(fromHex(OWN_KETTLE_FRAMES.pluginDelayStart5min));
+  });
+
+  it('extended status while scheduled exposes the delay countdown at [19–20]', () => {
+    const a = decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedScheduled297))!);
+    const b = decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedScheduled290))!);
+    expect(a).toMatchObject({
+      kind: 'extended', stage: Stage.DELAY_SCHEDULED, mode: Mode.GREEN_TEA, configuredHoldSeconds: 1800, remainingHoldSeconds: 1800,
+      delaySetSeconds: 300, delayRemainingSeconds: 297,
+    });
+    expect(b).toMatchObject({ delaySetSeconds: 300, delayRemainingSeconds: 290 });
+  });
+
+  it('after cancel the delay setting is retained and the countdown is zero', () => {
+    expect(decodeMessage(parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedAfterCancel))!)).toMatchObject({
+      kind: 'extended', stage: Stage.IDLE, delaySetSeconds: 300, delayRemainingSeconds: 0,
+    });
+  });
+
   it('isHeatingStage', () => {
     expect([0, 1, 2, 3, 5].map(isHeatingStage)).toEqual([false, true, true, true, false]);
   });

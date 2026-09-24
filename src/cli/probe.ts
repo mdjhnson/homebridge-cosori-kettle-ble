@@ -46,6 +46,7 @@ Changes kettle state (require --yes; documented commands only):
                                  --temp F        target °F (required for mybrew; for presets overrides byte[5])
                                  --hold-be       encode the hold field big-endian (encoding verification only)
   delay <mac> <minutes> <mode> Schedule heating (kettle-side timer). Same mode/--hold-min/--temp options as start
+                                 --cancel-after S  test: watch the schedule for S seconds, then cancel it
   stop <mac>                   Stop heating / keep-warm / cancel a scheduled delay
 
 Options:
@@ -90,6 +91,7 @@ type Flags = {
   yes?: boolean;
   all?: boolean;
   'show-key'?: boolean;
+  'cancel-after'?: string;
   help?: boolean;
 };
 
@@ -110,7 +112,7 @@ function formatStatus(s: KettleStatus): string {
     `onBase=${s.onBase === undefined ? '?' : s.onBase ? 'yes' : 'NO'}`,
   ];
   if (s.scheduled) {
-    parts.push('DELAY SCHEDULED');
+    parts.push(`DELAY SCHEDULED (${s.delayRemainingSeconds ?? '?'}s to start)`);
   }
   if (s.babyFormula) {
     parts.push('babyFormula=on');
@@ -358,7 +360,8 @@ function describe(message: KettleMessage, frame: Frame): string {
   case 'extended':
     return `status: ${STAGE_NAMES[message.stage] ?? `stage ${message.stage}`}, mode ${MODE_NAMES[message.mode] ?? message.mode}, `
       + `${message.tempF}°F → ${message.setpointF}°F, mybrew ${message.myTempF ?? '—'}°F, `
-      + `hold ${message.remainingHoldSeconds}/${message.configuredHoldSeconds}s, ${message.onBase ? 'on base' : 'OFF BASE'}`;
+      + `hold ${message.remainingHoldSeconds}/${message.configuredHoldSeconds}s, ${message.onBase ? 'on base' : 'OFF BASE'}`
+      + (message.delayRemainingSeconds ? `, starts in ${message.delayRemainingSeconds}s` : '');
   case 'compact':
     return `pushed: ${STAGE_NAMES[message.stage] ?? `stage ${message.stage}`}, mode ${MODE_NAMES[message.mode] ?? message.mode}, `
       + `${message.tempF}°F → ${message.setpointF}°F`;
@@ -566,8 +569,27 @@ async function cmdDelay(mac: string, minutesArg: string | undefined, modeArg: st
     }
     log.info(`Sending F1 delayed start: ${MODE_NAMES[mode]} in ${delaySeconds / 60} min, hold ${holdSeconds}s`);
     await client.delayedStart(delaySeconds, mode, { tempF, holdSeconds });
-    await reportAfterWrite(client, before, log);
-    log.info('The kettle keeps this schedule itself. Cancel it with `stop` (or the VeSync app).');
+    const cancelAfter = flags['cancel-after'] ? parseNumber(flags['cancel-after'], '--cancel-after', 1, 600) : undefined;
+    if (cancelAfter === undefined) {
+      await reportAfterWrite(client, before, log);
+      log.info('The kettle keeps this schedule itself. Cancel it with `stop` (or the VeSync app).');
+      return;
+    }
+    // Test mode: observe the scheduled state, then always try to cancel it.
+    try {
+      log.info(`Before: ${formatStatus(before)}`);
+      const until = Date.now() + cancelAfter * 1000;
+      do {
+        await delay(Math.min(3000, Math.max(0, until - Date.now())));
+        const s = await client.poll();
+        log.info(`Scheduled: ${formatStatus(s)}`);
+      } while (Date.now() < until);
+    } finally {
+      log.info('Cancelling with F4 stop');
+      await client.stop();
+    }
+    await delay(1500);
+    log.info(`After cancel: ${formatStatus(await client.poll())}`);
   });
 }
 
@@ -605,6 +627,7 @@ async function main(argv: string[]): Promise<number> {
         yes: { type: 'boolean', short: 'y' },
         all: { type: 'boolean' },
         'show-key': { type: 'boolean' },
+        'cancel-after': { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
     });

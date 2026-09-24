@@ -26,6 +26,8 @@ describe('extended status', () => {
       remainingHoldSeconds: fx.remainingHoldSeconds,
       onBase: fx.onBase,
       babyFormula: fx.babyFormula,
+      delaySetSeconds: fx.delaySetSeconds,
+      delayRemainingSeconds: fx.delayRemainingSeconds,
     });
   });
 

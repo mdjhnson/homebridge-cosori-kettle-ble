@@ -129,6 +129,9 @@ export interface ExtendedFixture {
   remainingHoldSeconds: number;
   onBase: boolean;
   babyFormula: boolean;
+  /** [17–18]: last delayed-start delay (E4 = 3780 s, captured alongside the 3780 s F1 delayed start). */
+  delaySetSeconds: number;
+  delayRemainingSeconds: number;
 }
 
 export const EXTENDED_FRAMES: ExtendedFixture[] = [
@@ -136,46 +139,55 @@ export const EXTENDED_FRAMES: ExtendedFixture[] = [
     name: 'E1 boiling',
     hex: 'a5:12:18:1d:00:a2:01:40:40:00:01:04:d4:7b:8c:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:08:07:00:00:01',
     stage: 1, mode: 4, setpointF: 212, tempF: 123, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+    delaySetSeconds: 0, delayRemainingSeconds: 0,
   },
   {
     name: 'E2 green tea, holding (159 s of 300 s left)',
     hex: 'A512831D00B6014040000301B4B5AF012C019F00000000580200000000002C01000001',
     stage: 3, mode: 1, setpointF: 180, tempF: 181, myTempF: 175, configuredHoldSeconds: 300, remainingHoldSeconds: 159, onBase: true, babyFormula: false,
+    delaySetSeconds: 600, delayRemainingSeconds: 0,
   },
   {
     name: 'E3 idle, baby formula on',
     hex: 'A5128B1D001401404000000068B2680000000000000000580200000000002C01010001',
     stage: 0, mode: 0, setpointF: 104, tempF: 178, myTempF: 104, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: true,
+    delaySetSeconds: 600, delayRemainingSeconds: 0,
   },
   {
     name: 'E4 idle, off base',
     hex: 'A512401D0093014040000000AF69AF0000000000010000C40E00000000003408000001',
     stage: 0, mode: 0, setpointF: 175, tempF: 105, myTempF: 175, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: false, babyFormula: false,
+    delaySetSeconds: 3780, delayRemainingSeconds: 0,
   },
   {
     name: 'E5 idle',
     hex: 'A512871D001601404000000068B5680000000000000000580200000000002C01000001',
     stage: 0, mode: 0, setpointF: 104, tempF: 181, myTempF: 104, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+    delaySetSeconds: 600, delayRemainingSeconds: 0,
   },
   {
     name: 'E6 idle on base (PROTOCOL.md)',
     hex: 'a5:12:19:1d:00:10:01:40:40:00:00:00:d4:5c:8c:00:00:00:00:00:00:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
     stage: 0, mode: 0, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: true, babyFormula: false,
+    delaySetSeconds: 26940, delayRemainingSeconds: 0,
   },
   {
     name: 'E7 idle off base (PROTOCOL.md)',
     hex: 'a5:12:1c:1d:00:0c:01:40:40:00:00:00:d4:5c:8c:00:00:00:00:00:01:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
     stage: 0, mode: 0, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: false, babyFormula: false,
+    delaySetSeconds: 26940, delayRemainingSeconds: 0,
   },
   {
     name: 'E8 boiling with 60 min hold (PROTOCOL.md scenario 2)',
     hex: 'a5:12:23:1d:00:c4:01:40:40:00:01:04:d4:5c:8c:01:10:0e:10:0e:00:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
     stage: 1, mode: 4, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 3600, remainingHoldSeconds: 3600, onBase: true, babyFormula: false,
+    delaySetSeconds: 26940, delayRemainingSeconds: 0,
   },
   {
     name: 'E9 lifted off base, heating stopped (PROTOCOL.md scenario 2)',
     hex: 'a5:12:25:1d:00:03:01:40:40:00:00:00:d4:5c:8c:00:00:00:00:00:01:00:00:3c:69:00:00:00:00:01:10:0e:00:00:01',
     stage: 0, mode: 0, setpointF: 212, tempF: 92, myTempF: 140, configuredHoldSeconds: 0, remainingHoldSeconds: 0, onBase: false, babyFormula: false,
+    delaySetSeconds: 26940, delayRemainingSeconds: 0,
   },
 ];
 
@@ -247,4 +259,11 @@ export const OWN_KETTLE_FRAMES = {
   stopAck: 'a5 12 05 04 00 a7 01 f4 a3 00',
   /** Pushed after cancel: back to idle. */
   compactAfterCancel: 'a5 22 46 0c 00 3e 01 41 40 00 00 00 b4 72 00 00 00 00',
+  /** Plugin-sent F1 (probe `delay … 5 green --hold-min 30`): 300 s delay, green tea, hold 1800 s. */
+  pluginDelayStart5min: 'a5 22 02 0b 00 58 01 f1 a3 00 2c 01 01 00 01 08 07',
+  /** Poll while scheduled: stage 5, hold 1800/1800, [17–18] = 300 s set, [19–20] = 297 s remaining. */
+  extendedScheduled297: 'a5 12 03 1d 00 70 01 40 40 00 05 01 b4 69 8c 01 08 07 08 07 00 00 00 2c 01 29 01 00 00 01 08 07 00 01 01',
+  extendedScheduled290: 'a5 12 05 1d 00 75 01 40 40 00 05 01 b4 69 8c 01 08 07 08 07 00 00 00 2c 01 22 01 00 00 01 08 07 00 01 01',
+  /** Poll after cancel: idle, [17–18] keeps the last delay (300 s), [19–20] = 0. */
+  extendedAfterCancel: 'a5 12 07 1d 00 bb 01 40 40 00 00 00 b4 69 8c 00 00 00 00 00 00 00 00 2c 01 00 00 00 00 01 08 07 00 01 01',
 };

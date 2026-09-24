@@ -38,6 +38,8 @@ export interface KettleStatus {
   active: boolean;
   /** True while a delayed start is scheduled (stage 5). */
   scheduled: boolean;
+  /** Seconds until a scheduled delayed start begins (from the last extended status). */
+  delayRemainingSeconds?: number;
   updatedAt: number;
 }
 
@@ -402,6 +404,7 @@ export class KettleClient extends EventEmitter<Events> {
       remainingHoldSeconds: s.remainingHoldSeconds,
       onBase: s.onBase,
       babyFormula: s.babyFormula,
+      delayRemainingSeconds: s.delayRemainingSeconds,
       active: isHeatingStage(s.stage),
       scheduled: s.stage === Stage.DELAY_SCHEDULED,
       updatedAt: Date.now(),
