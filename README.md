@@ -300,7 +300,7 @@ The plugin will offer an **on-demand** connection mode that connects briefly for
 
 ## Protocol notes
 
-These notes are based on the reverse-engineering work in the projects listed under [Credits](#credits), checked against real captured packets (see `test/fixtures/captures.ts`). The upstream docs differ from the captures in a few places; this implementation follows the captures.
+These notes are based on the reverse-engineering work in the projects listed under [Credits](#credits), checked against real captured packets (see `test/fixtures/captures.ts`). The upstream docs differ from the captures in a few places; this implementation follows the captures. **The full verified reference, with the evidence for each field and a list of corrections to upstream, is in [docs/PROTOCOL.md](docs/PROTOCOL.md).**
 
 - **Framing:** `A5 | type | seq | len_lo | len_hi | checksum | payload`. Type `0x22` is used for commands, and for status and completion frames the kettle sends on its own. Type `0x12` is used for ACKs and the extended status.
 - **Checksum:** start at 0 and subtract every byte of the frame, treating the checksum byte itself as `0x01`, then take the result mod 256. This single rule matches every capture, for both V0 and V1. The "sum of header bytes" formula in upstream docs does not match real traffic.

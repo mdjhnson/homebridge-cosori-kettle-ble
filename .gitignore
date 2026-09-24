@@ -25,3 +25,6 @@ homebridge.yaml
 # Local Homebridge test instance
 test/hbConfig/persist/
 test/hbConfig/accessories/
+
+# Private, machine-specific notes (never commit)
+docs/local/
