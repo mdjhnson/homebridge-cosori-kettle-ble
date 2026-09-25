@@ -158,7 +158,32 @@ Rejected: noble variants (native HCI sockets, bypass BlueZ, need container privi
 - Baby formula (F5) is not exposed. It could become an option.
 - Maximum delayed-start delay (docs say 12 h; the app's picker range is unverified).
 
-## 5. Release
+## 5. Release: publish to npm, built by GitHub Actions (maintainer's goal, 2026-09-25)
 
-- Publish to npm as `homebridge-cosori-kettle-ble` once Checkpoint C passes, then pursue the Homebridge "verified" badge (requires a config schema, ✓).
-- Ask barrymichels and rygwdn to add LICENSE files (both say MIT in their READMEs), and share the corrections to their docs (checksum, byte order, offsets, stage 5, delay fields, pairing order).
+**Goal:** stop hand-deploying tarballs. Publish `homebridge-cosori-kettle-ble` to npm from a GitHub Actions workflow, so installs and updates go through the Homebridge UI like any other plugin. Both `homebridge-cosori-kettle-ble` and `homebridge-cosori-kettle` were unclaimed on npm on 2026-09-25.
+
+**Too early?** Not for the pipeline. Setting it up now makes every future deploy a tagged, CI-built, reproducible release instead of a tarball built on the Mac. Publishing is what signals "ready for others", and that can stay gated:
+- Publish **pre-releases** (`0.2.0-beta.1`, …) under the npm `next` dist-tag. `npm install homebridge-cosori-kettle-ble` (the `latest` tag) then stays empty or unchanged until a deliberate stable release; the maintainer installs `@next` from the Homebridge UI.
+- Keep the README's "pre-release" banner until Checkpoint C passes, then publish `0.x` to `latest`, then pursue the Homebridge "verified" badge (requires a config schema, ✓).
+
+**Plan:**
+1. **Workflow** `.github/workflows/release.yml`: on a GitHub release (or a `v*` tag), run the same lint, typecheck, test and build as CI, then `npm publish --provenance --access public`, with `--tag next` for pre-release versions.
+2. **Auth:** npm Trusted Publishing (OIDC from GitHub Actions, no long-lived token). The maintainer creates the npm account (2FA) and links the repo. A brand-new package likely needs one first publish before Trusted Publishing can be configured; otherwise use a granular automation token as a repo secret. The maintainer does the npm account steps; Claude can't.
+3. **Package hygiene:** check `files`, `repository`, `bugs`, `homepage`, `keywords` (`homebridge-plugin`), `engines`; add a `CHANGELOG.md`; bump the version per release (semver; the switch-list change is a minor bump in 0.x).
+4. **Deploying to the Pi** becomes: publish → Homebridge UI → update the plugin → restart only the Kettle child bridge. Pre-merge testing of a branch can still use a tarball.
+
+**Also:** ask barrymichels and rygwdn to add LICENSE files (both say MIT in their READMEs), and share the corrections to their docs (checksum, byte order, offsets, stage 5, delay fields, pairing order).
+
+## 6. How the kettle appears in the Home app: revisit (raised by the maintainer, 2026-09-25)
+
+**On Base as an occupancy sensor is misleading.** With the kettle on its base, the Kitchen shows as **occupied** all day, which is the opposite of what's usually true, and it can trigger or block occupancy-based automations (a real problem in small apartments or offices, where one room holds everything). Options:
+- **Contact sensor** ("On Base": closed = on the base, open = lifted). It doesn't affect room occupancy, and automations still work ("when the kettle is lifted…"). To check: whether the Home app turns on notifications for new contact sensors by default.
+- Turn the sensor **off by default** and keep it opt-in, in whichever form.
+- Invert it (occupied = lifted, i.e. someone is pouring). Truer as occupancy, but only for seconds at a time, so it's of little use.
+- Migration: changing the service type creates a new tile, so existing automations on "On Base" would need redoing. Warn in the log and README.
+
+**The kettle is grouped under "Climate", and its water temperature becomes the room temperature.** The Home app groups tiles by service type, and a Thermostat is Climate. Worse, its current temperature feeds the room's summary: the maintainer's Kitchen header showed "Temperature 182°", which was the kettle water. There's no "kettle" type in HomeKit. Options to try:
+- **Faucet service with a linked Heater Cooler** (Apple's model for a water device with temperature control). It would group under **Water**. To test: whether the Home app still counts its temperature as the room's, whether Siri "set the kettle to 205" still works, and what the tile looks like.
+- A **Switch or Outlet** as the main service (groups under Other / Power) plus the temperature switches. That loses the dial and the live temperature, unless a Temperature Sensor is added, which is Climate again.
+- Keep the Thermostat and document it. The dial and Siri are the best controls today.
+- Decide after testing on a real phone. Changing the primary service creates a new tile, so this is a breaking change for automations: do it once, together with the On Base change, and before the first stable npm release.
