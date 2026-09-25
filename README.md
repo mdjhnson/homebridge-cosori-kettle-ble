@@ -238,7 +238,7 @@ Configure the plugin in the Homebridge UI (the form is generated from `config.sc
 | `accessories.onBaseSensor` | `true` | "On Base" occupancy sensor |
 | `accessories.keepWarmSwitch` | `true` | Keep Warm switch |
 | `accessories.delayStartSwitch` | `false` | Delay Start switch |
-| `switches` | Green Tea 180, Oolong 195, Coffee 205, Boil 212 | Temperature switches: a list of `{ "name", "temperature" }`. See [Temperature switches](#temperature-switches) |
+| `switches` | empty (the kettle presets) | Temperature switches: a list of `{ "name", "temperature" }`. See [Temperature switches](#temperature-switches) |
 | `dbusAddress` | `auto` | `auto` uses `/run/dbus-host/system_bus_socket` if present (Docker), else the system bus |
 | `adapter` | first adapter | Bluetooth adapter to use: its MAC address (recommended, stable across reboots) or a name like `hci1`. See [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With several adapters and no setting, the plugin logs a warning listing them |
 | `protocolVersion` | `auto` | `auto` detects it from firmware; `0` or `1` forces it |
@@ -260,7 +260,7 @@ The kettle's controls on the base and the VeSync app keep working. Changes made 
 
 ### Temperature switches
 
-In the plugin settings, **Temperature switches** is a list you can edit: add, remove, rename, or change the temperature of each switch. Each item becomes a switch in the Home app.
+In the plugin settings, **Temperature switches** is a list you can edit: add, remove, rename, or change the temperature of each switch. Each item becomes a switch in the Home app. With the list empty, a new install gets the kettle's four presets, the same as this list:
 
 ```json
 "switches": [
@@ -271,11 +271,11 @@ In the plugin settings, **Temperature switches** is a list you can edit: add, re
 ]
 ```
 
-- **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. A temperature within 1 °F of a preset uses that preset. Any other temperature from 104–212 °F (40–100 °C) also works: the kettle stores it as its **MyBrew** temperature (which the kettle's MyBrew button and the VeSync app also use) and heats in MyBrew mode.
+- **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. A temperature within 1 °F of a preset uses that preset (and counts as that preset's temperature, so two such items both show On together; the log warns about it). Any other temperature from 104–212 °F (40–100 °C) also works: the kettle stores it as its **MyBrew** temperature (which the kettle's MyBrew button and the VeSync app also use) and heats in MyBrew mode.
 - **°F or °C:** write temperatures in either unit. The ranges don't overlap (104–212 °F, 40–100 °C), so the plugin tells them apart by value, whatever `temperatureUnit` is set to.
-- **Names:** letters, digits and spaces only (HomeKit rejects other characters). Invalid items are skipped with a warning in the log.
-- **Keeping your tiles:** each tile is tied to its name. Reordering items or changing a temperature keeps the tile, its room and your automations. Renaming an item in the plugin settings creates a new tile, so rename in the Home app instead.
-- **Upgrading:** older versions had fixed preset checkboxes (`accessories.presets`). They keep working, turned into the list automatically (same tiles), with a note in the log. The **MyBrew switch was removed**: add a switch with your own temperature instead.
+- **Names:** letters, digits and spaces only (HomeKit rejects other characters). Names that differ only in capitals or spaces count as the same. Invalid items are skipped with a warning in the log. While any item is invalid, tiles missing from the list are kept (doing nothing) rather than deleted, so a typo never costs you a tile's room and automations.
+- **Keeping your tiles:** each tile is tied to its name. Reordering items, changing a temperature, or changing only capitals keeps the tile, its room and your automations. Any other rename in the plugin settings creates a new tile, so rename in the Home app instead.
+- **Upgrading:** older versions had fixed preset checkboxes (`accessories.presets`). They keep working, turned into the list automatically (same tiles), with a note in the log. An older install with no list and no checkboxes keeps the preset tiles it has (by default just Boil). The **MyBrew switch was removed**: add a switch with your own temperature instead.
 - **Keep warm** is global: the Keep Warm switch and `keepWarmMinutes` apply to every switch.
 
 ### Schedules and timing

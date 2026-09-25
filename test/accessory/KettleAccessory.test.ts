@@ -158,6 +158,57 @@ describe('KettleAccessory services', () => {
     expect(accessory.getServiceById(S.Switch, 'keep-warm')).toBeDefined();
   });
 
+  it('keeps the tile of a switch entry that became invalid, and removes it once the list is valid', async () => {
+    const accessory = newAccessory();
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Boil', temperature: 212 }, { name: 'Coffee', temperature: 205 }] }),
+      accessory, manager);
+    const boil = accessory.getServiceById(S.Switch, 'preset-boil');
+    // A typo in the Boil entry: its tile stays (room, automations) but does nothing.
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Boil!', temperature: 212 }, { name: 'Coffee', temperature: 205 }] }),
+      accessory, manager);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBe(boil);
+    expect(await boil!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
+    // Fixed by removing the entry: now the tile goes.
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Coffee', temperature: 205 }] }), accessory, manager);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBeUndefined();
+  });
+
+  it('with no list, an install from before the list keeps its preset tiles instead of gaining the four defaults', () => {
+    const accessory = newAccessory();
+    accessory.context.mac = 'FC:58:FA:0F:C3:26'; // created by an older version
+    accessory.addService(S.Switch, 'Boil', 'preset-boil');
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config(), accessory, manager);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBeDefined();
+    for (const subtype of ['preset-greenTea', 'preset-oolong', 'preset-coffee']) {
+      expect(accessory.getServiceById(S.Switch, subtype)).toBeUndefined();
+    }
+    // A new install gets the four presets, and keeps them on restart.
+    const fresh = newAccessory('Other');
+    new KettleAccessory(fakeApi(), silentLogger, config(), fresh, manager);
+    new KettleAccessory(fakeApi(), silentLogger, config(), fresh, manager);
+    expect(fresh.services.filter((svc) => svc.subtype?.startsWith('preset-'))).toHaveLength(4);
+  });
+
+  it('follows a rename in the config that keeps the tile, unless the user renamed it in the Home app', () => {
+    const accessory = newAccessory();
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Pour over', temperature: 200 }, { name: 'Boil', temperature: 212 }] }),
+      accessory, manager);
+    accessory.getServiceById(S.Switch, 'preset-boil')!.updateCharacteristic(C.ConfiguredName, 'Kettle On');
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Pour Over', temperature: 200 }, { name: 'BOIL', temperature: 212 }] }),
+      accessory, manager);
+    expect(accessory.getServiceById(S.Switch, 'preset-pourOver')!.getCharacteristic(C.ConfiguredName).value).toBe('Pour Over');
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')!.getCharacteristic(C.ConfiguredName).value).toBe('Kettle On');
+  });
+
   it('thermostat range is 40–100 °C with 0.5 °C steps and OFF/HEAT only', async () => {
     const { thermostat } = await setup();
     const props = thermostat().getCharacteristic(C.TargetTemperature).props;

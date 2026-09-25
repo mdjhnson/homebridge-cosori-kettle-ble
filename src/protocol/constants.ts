@@ -108,6 +108,23 @@ export const PRESET_TEMP_F: Readonly<Record<number, number>> = {
   [Mode.BOIL]: 212,
 };
 
+/** Map a target temperature to a preset mode when within ±1 °F of a preset (after rounding). */
+export function presetForTemp(tempF: number): number | undefined {
+  const rounded = Math.round(tempF);
+  for (const [mode, preset] of Object.entries(PRESET_TEMP_F)) {
+    if (Math.abs(rounded - preset) <= 1) {
+      return Number(mode);
+    }
+  }
+  return undefined;
+}
+
+/** The setpoint the kettle heats to for a target: the preset's own temperature when the target snaps to one, else the target. */
+export function effectiveSetpointF(tempF: number): number {
+  const mode = presetForTemp(tempF);
+  return mode === undefined ? Math.round(tempF) : PRESET_TEMP_F[mode]!;
+}
+
 /** Status byte [4]. */
 export const Stage = {
   IDLE: 0x00,

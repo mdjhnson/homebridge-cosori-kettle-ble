@@ -13,9 +13,33 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 
 **Open question to test first:** does registering a new key unpair the VeSync app? This is unknown. Test it on the maintainer's kettle with consent: `cosori-probe pair`, then check whether the app still connects. The worst case is re-adding the kettle in VeSync. Document the result in the README.
 
+## 1b. Easier discovery and setup: to verify (researched 2026-09-24)
+
+**Goal:** the user shouldn't have to type a MAC or capture a key. Direction: one custom settings page. Scan → pick the kettle → put it in pairing mode → Pair → the MAC and key are saved into the config. `mac` becomes optional: auto-use the kettle when exactly one is found, and list them when there are several (homebridge-mi-hygrothermograph's "first one found" approach breaks with two devices). Model to copy: homebridge-switchbot's custom UI `/discover` endpoint ([source](https://github.com/OpenWonderLabs/homebridge-switchbot/tree/main/src/homebridge-ui)). Never pass user input to a shell (homebridge-yeelight-ble does).
+
+**To verify on the kettle (each needs the maintainer's go-ahead):**
+
+1. **Which button enters pairing mode.** The maintainer reports that **holding the Bluetooth button for about 4 s** makes it flash and enters pairing mode, **dropping any existing connection** (e.g. the VeSync app). The docs and probe say MyBrew (PROTOCOL.md "Register" row, `cosori-probe pair` prompt, `NotInPairingModeError` hint), which may be an upstream assumption. Test `cosori-probe pair` after a Bluetooth-button hold, and after a MyBrew hold. Also check whether the hold drops the plugin's persistent connection too; the pairing flow would then have to reconnect before sending register (80) then hello (81).
+2. **Whether the advertisement shows pairing mode.** Record the manufacturer data passively (no writes) while idle, while pairing mode is flashing, while heating, and off the base. A flag would let the UI say "kettle ready to pair". Assumed layout (from the Etekcity scale decoder [`etekcity_esf551_ble`](https://github.com/Kohei-Wada/etekcity_esf551_ble/blob/main/src/etekcity_esf551_ble/detection.py), unconfirmed for the kettle): `[0]` header (`01`, upper bits may vary), `[1:7]` MAC reversed, `[7:9]` model ID BE (ours `C2 D4`, probably the CS108-NK), `[9:]` model-specific (`03 01 02`, unknown). Our full capture: `d0 06 01 26 c3 0f fa 58 fc c2 d4 03 01 02`.
+3. **Whether renaming the kettle in VeSync changes the advertised name.** Probably not (the name is a cloud field), but untested. Rename it, then `cosori-probe scan`.
+4. **Address type.** FC:58:FA and 7C:FE:62 are registered OUIs (Shenzhen XinZhongXin), so the address is very likely public and stable. Confirm with BlueZ `Device1.AddressType`.
+5. **Second phone on the same VeSync account.** Does it control the kettle without pairing mode? If it does, the key comes from the account somehow, and the cloud route below deserves another look.
+
+**Name and matching:**
+- Every documented unit (all CS108-NK, about three) advertises `Cosori Gooseneck Kettle`. Other regions and models are unknown.
+- The name only arrives in the scan response, so passive scanners (ESPHome proxies) never see it, and service `fff0` is generic and caused false matches ([rygwdn/ha-cosori-kettle#13](https://github.com/rygwdn/ha-cosori-kettle/issues/13)). BlueZ discovery is active, so we do get the name.
+- **Bug:** `looksLikeKettle` in `src/cli/probe.ts` accepts any 0x06D0 device, so a VeSync scale would be listed as a kettle. Proposed matcher, as a pure function in `src/protocol/` with the capture above as a fixture: company 0x06D0 **and** the MAC echoed in bytes 1–6 **and** (model `C2D4` **or** a name containing "Cosori").
+- While the plugin is connected, the kettle stops advertising, so a scan from the settings page (a separate process) won't find it. Show the configured kettle, or pause the connection first.
+
+**VeSync cloud login: probably not worth it.**
+- Login (pyvesync 3.4.2): `/globalPlatform/api/accountAuth/v1/authByPWDOrOTM`, then `/user/api/accountManage/v1/loginByAuthorizeCode4Vesync`, with an MD5 password and US/EU hosts.
+- The device list (`/cloud/v1/deviceManaged/devices`) includes Bluetooth-only devices. An Etekcity BLE scale showed `connectionType: "BT"`, a real `macID` and **`authKey: null`** ([ioBroker forum](https://forum.iobroker.net/topic/59466/test-adapter-vesync/63)). No source shows the cloud returning a kettle key, and nobody has published the kettle's entry.
+- It would add only the MAC and the user's chosen name. Costs: a plaintext password in `config.json`, 2FA must be turned off (home-assistant/core#153551, #154305), region mismatches, and account lockouts after too many requests (RaresAil/homebridge-levoit-air-purifier discussion #104).
+- Optional check: dump your own device list with pyvesync and look at the kettle's entry. If `authKey` isn't null, treat it like the registration key.
+
 ## 2. Tile layout plan (decided and built 2026-09-24)
 
-**Built** (see README "Temperature switches"). As built: temperatures are read as °F or °C by range (the ranges don't overlap), so the default list works for Celsius users; switches sharing a temperature get a warning but are kept. Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and user-defined temperature switches (was §2b). Nothing is built until the decisions at the end are made.
+**Built** (see README "Temperature switches"). As built: temperatures are read as °F or °C by range (the ranges don't overlap), so the default list works for Celsius users; switches sharing a temperature get a warning but are kept. After review: the defaults are applied at runtime, not as a schema default (the form would otherwise fill them in for a legacy config and replace its migrated selection). So an empty list means "defaults": a new install gets the four presets, an install from before the list keeps the preset tiles it has, and there is no way to configure zero switches. While any entry is invalid, unlisted tiles are kept. Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and user-defined temperature switches (was §2b). Nothing is built until the decisions at the end are made.
 
 **Why:** the maintainer's setup shows nine tiles (thermostat, On Base, five presets, Keep Warm, Delay Start) and it's confusing. The preset switches are fixed; users want their own temperatures ("Pour-over 200 °F").
 

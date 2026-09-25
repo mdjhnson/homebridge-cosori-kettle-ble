@@ -12,10 +12,10 @@
  */
 import type { API, CharacteristicValue, PlatformAccessory, Service, WithUUID } from 'homebridge';
 
-import type { KettlePluginConfig, TemperatureSwitch } from '../config.js';
+import { DEFAULT_SWITCHES, type KettlePluginConfig, type TemperatureSwitch } from '../config.js';
 import type { ConnectionManager } from '../kettle/ConnectionManager.js';
 import { describeCompletion, type KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
-import { Mode, PRESET_TEMP_F } from '../protocol/constants.js';
+import { effectiveSetpointF, Mode, PRESET_TEMP_F } from '../protocol/constants.js';
 import { errorMessage } from '../util/async.js';
 import type { Logger } from '../util/log.js';
 import {
@@ -33,6 +33,8 @@ interface KettleContext {
   targetF?: number;
   /** Keep-warm preference applied when heating starts. */
   keepWarm?: boolean;
+  /** Created by a version with the switch list. Such an install with no list configured gets DEFAULT_SWITCHES. */
+  createdWithSwitchList?: boolean;
 }
 
 export class KettleAccessory {
@@ -54,6 +56,9 @@ export class KettleAccessory {
   ) {
     const { Service: S, Characteristic: C } = api.hap;
     this.ctx = accessory.context as KettleContext;
+    if (this.ctx.mac === undefined) {
+      this.ctx.createdWithSwitchList = true;
+    }
     this.ctx.mac = config.mac;
     this.ctx.keepWarm ??= true;
 
@@ -94,14 +99,28 @@ export class KettleAccessory {
         : C.OccupancyDetected.OCCUPANCY_DETECTED)));
 
     // --- Temperature switches ------------------------------------------------------------------
-    // Drop tiles for switches that were removed from the config (and the retired MyBrew switch).
-    const wanted = new Set(config.switches.map((item) => item.subtype));
-    for (const svc of [...accessory.services]) {
-      if (svc.UUID === S.Switch.UUID && svc.subtype?.startsWith('preset-') && !wanted.has(svc.subtype)) {
+    const switches = config.switches ?? this.defaultSwitches();
+    const wanted = new Set(switches.map((item) => item.subtype));
+    const unlisted = accessory.services.filter((svc) => svc.UUID === S.Switch.UUID && svc.subtype?.startsWith('preset-') && !wanted.has(svc.subtype));
+    if (config.switchesSkipped && unlisted.length > 0) {
+      // A typo in a switch entry must not delete its tile (and with it the tile's room and automations).
+      log.warn(`${config.name}: keeping ${unlisted.map((svc) => `"${svc.displayName}"`).join(', ')} until the skipped switch entries `
+        + 'are fixed; they do nothing meanwhile');
+      for (const svc of unlisted) {
+        svc.getCharacteristic(C.On)
+          .onGet(() => false)
+          .onSet(() => {
+            log.warn(`${config.name}: "${svc.displayName}" is not in the switch list; fix the skipped entries in the plugin settings`);
+            setTimeout(() => svc.updateCharacteristic(C.On, false), 200);
+          });
+      }
+    } else {
+      // Drop tiles for switches that were removed from the config (and the retired MyBrew switch).
+      for (const svc of unlisted) {
         accessory.removeService(svc);
       }
     }
-    for (const item of config.switches) {
+    for (const item of switches) {
       const service = this.optionalService(true, S.Switch, item.subtype, item.name)!;
       this.temperatureSwitches.push({ item, service });
       service.getCharacteristic(C.On)
@@ -145,9 +164,9 @@ export class KettleAccessory {
     return s.active || s.scheduled ? s.setpointF : this.ctx.targetF ?? s.setpointF;
   }
 
-  /** On while the kettle is heating or holding at this switch's temperature (presets can differ by 1 °F). */
+  /** On while the kettle is heating or holding at this switch's setpoint. */
   private switchOn(item: TemperatureSwitch, s: KettleStatus): boolean {
-    return s.active && Math.abs(s.setpointF - item.temperatureF) <= 1;
+    return s.active && effectiveSetpointF(s.setpointF) === item.temperatureF;
   }
 
   private keepWarmOn(s: KettleStatus): boolean {
@@ -305,6 +324,21 @@ export class KettleAccessory {
 
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * Switches when the config has no list: the kettle presets for a new install. An install from before the list
+   * keeps the preset tiles it has (the old default was Boil only), so an upgrade never adds tiles on its own.
+   */
+  private defaultSwitches(): TemperatureSwitch[] {
+    if (this.ctx.createdWithSwitchList) {
+      return [...DEFAULT_SWITCHES];
+    }
+    const { Service: S } = this.api.hap;
+    const kept = DEFAULT_SWITCHES.filter((item) => this.accessory.getServiceById(S.Switch, item.subtype));
+    this.log.warn(`${this.config.name}: no temperature switches configured; keeping your existing preset tiles `
+      + `(${kept.map((item) => item.name).join(', ') || 'none'}). Add switches under "Temperature switches" in the plugin settings.`);
+    return kept;
+  }
+
   /** Add (or keep) a named sub-service when enabled; remove a cached one when disabled. */
   private optionalService(enabled: boolean, type: WithUUID<typeof Service>, subtype: string, name: string): Service | undefined {
     const existing = this.accessory.getServiceById(type, subtype);
@@ -321,17 +355,18 @@ export class KettleAccessory {
 
   /**
    * Set Name and ConfiguredName. The Home app shows ConfiguredName and, when a bridge is added, may overwrite
-   * it with generic defaults ("Switch 3", "Occupancy Sensor"). Restore ours in that case, but keep any name
-   * the user chose.
+   * it with generic defaults ("Switch 3", "Occupancy Sensor"). Restore ours in that case, and follow a rename
+   * in the config, but keep any name the user chose in the Home app.
    */
   private applyName(svc: Service, name: string): void {
     const { Characteristic: C } = this.api.hap;
+    const previous = svc.getCharacteristic(C.Name).value;
     svc.setCharacteristic(C.Name, name);
     if (!svc.testCharacteristic(C.ConfiguredName)) {
       svc.addOptionalCharacteristic(C.ConfiguredName);
     }
     const current = svc.getCharacteristic(C.ConfiguredName).value;
-    if (typeof current !== 'string' || current.trim() === '' || isHomeAppDefaultName(current)) {
+    if (typeof current !== 'string' || current.trim() === '' || isHomeAppDefaultName(current) || current === previous) {
       svc.updateCharacteristic(C.ConfiguredName, name);
     }
   }
