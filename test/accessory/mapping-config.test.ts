@@ -65,8 +65,8 @@ describe('parseConfig', () => {
     expect(warnings).toEqual([]);
     expect(config).toMatchObject({
       name: 'Kettle', mac: 'FC:58:FA:0F:C3:26', dbusAddress: 'auto', protocolVersion: 'auto', temperatureUnit: 'F',
-      connectionMode: 'persistent', pollIntervalSeconds: 5, keepWarmMinutes: 30, delayStartMinutes: 30, debug: false,
-      accessories: { onBaseSensor: true, keepWarmSwitch: true, delayStartSwitch: false },
+      connectionMode: 'persistent', pollIntervalSeconds: 5, keepWarmMinutes: 30, debug: false,
+      accessories: { onBaseSensor: true, keepWarmSwitch: true },
       switchesSkipped: false,
     });
     expect(config!.switches).toBeUndefined(); // no list: the accessory picks the defaults
@@ -85,9 +85,15 @@ describe('parseConfig', () => {
   });
 
   it('replaces out-of-range numbers with defaults and warns', () => {
-    const { config, warnings } = parseConfig({ ...base, pollInterval: 0, keepWarmMinutes: 90, delayStartMinutes: 'x' });
-    expect(config).toMatchObject({ pollIntervalSeconds: 5, keepWarmMinutes: 30, delayStartMinutes: 30 });
-    expect(warnings).toHaveLength(3);
+    const { config, warnings } = parseConfig({ ...base, pollInterval: 0, keepWarmMinutes: 90 });
+    expect(config).toMatchObject({ pollIntervalSeconds: 5, keepWarmMinutes: 30 });
+    expect(warnings).toHaveLength(2);
+  });
+
+  it('explains the Delay Start removal only to configs that had it on', () => {
+    expect(parseConfig({ ...base, accessories: { delayStartSwitch: true }, delayStartMinutes: 25 }).warnings)
+      .toEqual([expect.stringMatching(/Delay Start switch was removed.*Home app automation/)]);
+    expect(parseConfig({ ...base, accessories: { delayStartSwitch: false }, delayStartMinutes: 25 }).warnings).toEqual([]);
   });
 
   it('accepts an adapter MAC (normalised) or hciN name, and warns on anything else', () => {

@@ -219,18 +219,6 @@ export class KettleClient extends EventEmitter<Events> {
     await this.send(Cmd.DELAYED_START, delayedStartPayload(this.versionByte, delaySeconds, mode, options));
   }
 
-  /** Like heatTo(), but scheduled: preset when the target is a preset temperature, else MyBrew (F3 first). */
-  async heatToLater(delaySeconds: number, tempF: number, holdSeconds = 0): Promise<number> {
-    const mode = presetForTemp(tempF);
-    if (mode !== undefined) {
-      await this.delayedStart(delaySeconds, mode, { holdSeconds });
-      return mode;
-    }
-    await this.setMyTemp(tempF);
-    await this.delayedStart(delaySeconds, Mode.MY_BREW, { tempF, holdSeconds });
-    return Mode.MY_BREW;
-  }
-
   /**
    * Heat to a temperature. Uses the matching preset mode when the target is a preset temperature,
    * otherwise stores it as the MyBrew temperature (F3) and starts MyBrew (F0 mode 5).

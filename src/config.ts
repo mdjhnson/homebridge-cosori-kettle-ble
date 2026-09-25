@@ -3,7 +3,7 @@
  * by defaults and reported, so a typo never crashes Homebridge.
  */
 import {
-  effectiveSetpointF, MAX_DELAY_SECONDS, MAX_HOLD_SECONDS, MAX_SETPOINT_F, MIN_SETPOINT_F, Mode, PRESET_TEMP_F, setpointFromC,
+  effectiveSetpointF, MAX_HOLD_SECONDS, MAX_SETPOINT_F, MIN_SETPOINT_F, Mode, PRESET_TEMP_F, setpointFromC,
 } from './protocol/constants.js';
 import { isValidKeyString, parseKey } from './protocol/key.js';
 
@@ -45,11 +45,9 @@ export interface KettlePluginConfig {
   onDemandPollIntervalSeconds: number;
   idleDisconnectSeconds: number;
   keepWarmMinutes: number;
-  delayStartMinutes: number;
   accessories: {
     onBaseSensor: boolean;
     keepWarmSwitch: boolean;
-    delayStartSwitch: boolean;
   };
   /**
    * The temperature switches, or undefined when the config has no list (missing or empty). The accessory then
@@ -212,6 +210,10 @@ export function parseConfig(raw: Record<string, unknown>): ParsedConfig {
 
   const accessoriesRaw = (raw.accessories ?? {}) as Record<string, unknown>;
   const { switches, skipped: switchesSkipped } = parseSwitches(raw, accessoriesRaw, warnings);
+  if (accessoriesRaw.delayStartSwitch === true) {
+    warnings.push('The Delay Start switch was removed. To heat at a time of day, use a Home app automation or ask Siri '
+      + '(e.g. "at 6:30 turn on Green Tea")');
+  }
 
   const mode = raw.connectionMode === 'onDemand' ? 'onDemand' : 'persistent';
   if (raw.connectionMode !== undefined && raw.connectionMode !== 'onDemand' && raw.connectionMode !== 'persistent') {
@@ -254,11 +256,9 @@ export function parseConfig(raw: Record<string, unknown>): ParsedConfig {
       onDemandPollIntervalSeconds: num(raw.onDemandPollInterval, 'onDemandPollInterval', 300, 30, 86_400, warnings),
       idleDisconnectSeconds: num(raw.idleDisconnect, 'idleDisconnect', 30, 5, 3600, warnings),
       keepWarmMinutes: num(raw.keepWarmMinutes, 'keepWarmMinutes', 30, 1, MAX_HOLD_SECONDS / 60, warnings),
-      delayStartMinutes: num(raw.delayStartMinutes, 'delayStartMinutes', 30, 1, MAX_DELAY_SECONDS / 60, warnings),
       accessories: {
         onBaseSensor: bool(accessoriesRaw.onBaseSensor, true),
         keepWarmSwitch: bool(accessoriesRaw.keepWarmSwitch, true),
-        delayStartSwitch: bool(accessoriesRaw.delayStartSwitch, false),
       },
       switches,
       switchesSkipped,

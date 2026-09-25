@@ -234,10 +234,8 @@ Configure the plugin in the Homebridge UI (the form is generated from `config.sc
 | `idleDisconnect` | `30` | On demand: seconds idle before disconnecting. The plugin stays connected while the kettle is heating |
 | `temperatureUnit` | `F` | Display unit in HomeKit (`F` or `C`) |
 | `keepWarmMinutes` | `30` | Keep-warm duration, 1–60 |
-| `delayStartMinutes` | `30` | Delay used by the Delay Start switch, 1–720 |
 | `accessories.onBaseSensor` | `true` | "On Base" occupancy sensor |
 | `accessories.keepWarmSwitch` | `true` | Keep Warm switch |
-| `accessories.delayStartSwitch` | `false` | Delay Start switch |
 | `switches` | empty (the kettle presets) | Temperature switches: a list of `{ "name", "temperature" }`. See [Temperature switches](#temperature-switches) |
 | `dbusAddress` | `auto` | `auto` uses `/run/dbus-host/system_bus_socket` if present (Docker), else the system bus |
 | `adapter` | first adapter | Bluetooth adapter to use: its MAC address (recommended, stable across reboots) or a name like `hci1`. See [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With several adapters and no setting, the plugin logs a warning listing them |
@@ -254,7 +252,6 @@ Configure the plugin in the Homebridge UI (the form is generated from `config.sc
 | **On Base** (occupancy) | "Occupied" while the kettle is on its base. Heating is refused while it is off the base. |
 | **Temperature switches** | One switch per item in the `switches` list (default: the kettle's four presets). On heats to its temperature; it shows On while the kettle is heating or holding at that temperature; Off stops the kettle. |
 | **Keep Warm** | Whether heating holds the temperature for `keepWarmMinutes` afterwards. Toggling it while heating updates the running kettle. |
-| **Delay Start** | Schedules heating to the current target after `delayStartMinutes`, using the kettle's own timer, so it runs even if Bluetooth drops. On while scheduled; turning it off cancels. |
 
 The kettle's controls on the base and the VeSync app keep working. Changes made there show up in HomeKit on the next poll, or instantly when the kettle pushes them.
 
@@ -275,12 +272,12 @@ In the plugin settings, **Temperature switches** is a list you can edit: add, re
 - **°F or °C:** write temperatures in either unit. The ranges don't overlap (104–212 °F, 40–100 °C), so the plugin tells them apart by value, whatever `temperatureUnit` is set to.
 - **Names:** letters, digits and spaces only, at least two characters (HomeKit rejects other names). Names that differ only in capitals or spaces count as the same, and the later one is skipped. Invalid items are skipped with a warning in the log. While any item is invalid (or `switches` is not a list), tiles missing from the list are kept rather than deleted, so a typo never costs you a tile's room and automations. Turning such a tile on fails with an error in HomeKit, so an automation or Siri reports it instead of pretending to heat.
 - **Keeping your tiles:** each tile is tied to its name. Reordering items, changing a temperature, or changing only capitals keeps the tile, its room and your automations. Any other rename in the plugin settings creates a new tile, so rename in the Home app instead.
-- **Upgrading:** older versions had fixed preset checkboxes (`accessories.presets`). They keep working, turned into the list automatically (same tiles), with a note in the log. An older install with no list and no checkboxes keeps the preset tiles it has (by default just Boil). The **MyBrew switch was removed**: add a switch with your own temperature instead.
+- **Upgrading:** older versions had fixed preset checkboxes (`accessories.presets`). They keep working, turned into the list automatically (same tiles), with a note in the log. An older install with no list and no checkboxes keeps the preset tiles it has (by default just Boil). The **MyBrew switch was removed**: add a switch with your own temperature instead. The **Delay Start switch was removed** too: use a Home app automation or Siri (see [Schedules and timing](#schedules-and-timing)); its tile disappears on the next start.
 - **Keep warm** is global: the Keep Warm switch and `keepWarmMinutes` apply to every switch.
 
 ### Schedules and timing
 
-For "every weekday at 6:30", create a Home app automation (*Automation → A Time of Day → Kettle → Green Tea*), or ask Siri: "at 6:30 turn on Green Tea". This is the flexible way to pick a time. The Delay Start switch uses the kettle's own timer with a fixed delay (`delayStartMinutes`). It's less flexible, but it still fires if Homebridge or Bluetooth is down at that moment.
+For "every weekday at 6:30", create a Home app automation (*Automation → A Time of Day → Kettle → Green Tea*), or ask Siri: "at 6:30 turn on Green Tea" (Siri creates the automation in the Shortcuts app). The command is sent at that moment, so it needs the kettle to be reachable then: see the next paragraph. A delayed start set in the VeSync app uses the kettle's own timer and shows in HomeKit as not heating until it starts.
 
 **Commands during a dropped connection.** A command never runs much later than you asked:
 - If the kettle has been unreachable for **more than 15 s**, the command is refused right away and HomeKit shows **No Response**. It is not queued.

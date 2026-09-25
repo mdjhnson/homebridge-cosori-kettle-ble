@@ -84,20 +84,28 @@ describe('KettleAccessory services', () => {
     for (const subtype of ['preset-greenTea', 'preset-oolong', 'preset-coffee', 'preset-boil']) {
       expect(accessory.getServiceById(S.Switch, subtype)).toBeDefined();
     }
-    expect(accessory.getServiceById(S.Switch, 'delay-start')).toBeUndefined();
     expect((accessory as unknown as { services: unknown[] }).services).toHaveLength(8); // info, thermostat, on-base, 4 switches, keep-warm
     expect(accessory.getService(S.AccessoryInformation)!.getCharacteristic(C.SerialNumber).value).toBe('FC:58:FA:0F:C3:26');
   });
 
   it('honours accessory toggles', async () => {
     const { accessory } = await setup({
-      overrides: { accessories: { onBaseSensor: false, keepWarmSwitch: false, delayStartSwitch: true }, switches: [{ name: 'Coffee', temperature: 205 }] },
+      overrides: { accessories: { onBaseSensor: false, keepWarmSwitch: false }, switches: [{ name: 'Coffee', temperature: 205 }] },
     });
     expect(accessory.getServiceById(S.OccupancySensor, 'on-base')).toBeUndefined();
     expect(accessory.getServiceById(S.Switch, 'keep-warm')).toBeUndefined();
     expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBeUndefined();
     expect(accessory.getServiceById(S.Switch, 'preset-coffee')).toBeDefined();
-    expect(accessory.getServiceById(S.Switch, 'delay-start')).toBeDefined();
+  });
+
+  it('removes the retired Delay Start tile', async () => {
+    const accessory = newAccessory();
+    accessory.addService(S.Switch, 'Delay Start', 'delay-start');
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config({ accessories: { delayStartSwitch: true } }), accessory, manager, false);
+    expect(accessory.getServiceById(S.Switch, 'delay-start')).toBeUndefined();
   });
 
   it('uses HAP-valid service names and raises no characteristic warnings', async () => {
@@ -109,9 +117,9 @@ describe('KettleAccessory services', () => {
     const manager = new ConnectionManager(new KettleClient(fake), {
       key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
     });
-    new KettleAccessory(fakeApi(), silentLogger, config({ accessories: { delayStartSwitch: true } }), accessory, manager, true);
+    new KettleAccessory(fakeApi(), silentLogger, config(), accessory, manager, true);
     const names = (accessory as unknown as { services: Array<{ displayName: string }> }).services.map((s) => s.displayName).filter(Boolean);
-    expect(names).toEqual(['Kettle', 'On Base', 'Green Tea', 'Oolong', 'Coffee', 'Boil', 'Keep Warm', 'Delay Start']);
+    expect(names).toEqual(['Kettle', 'On Base', 'Green Tea', 'Oolong', 'Coffee', 'Boil', 'Keep Warm']);
     for (const name of names) {
       expect(name).toMatch(/^[\p{L}\p{N}][\p{L}\p{N} ',.-]*[\p{L}\p{N}]$/u);
     }
@@ -397,20 +405,8 @@ describe('KettleAccessory commands', () => {
     await until(() => lastSent(Cmd.STOP) !== undefined);
   });
 
-  it('Delay Start switch schedules the current target with the configured delay', async () => {
-    const { sub, lastSent } = await setup({ overrides: { delayStartMinutes: 25, accessories: { delayStartSwitch: true } } });
-    await sub(S.Switch, 'delay-start')!.getCharacteristic(C.On).handleSetRequest(true);
-    await until(() => lastSent(Cmd.DELAYED_START) !== undefined);
-    // 180 °F setpoint → green tea preset; 25 min; hold 30 min — identical to the VeSync app capture
-    expect(lastSent(Cmd.DELAYED_START)!.payload).toEqual(payload(OWN_KETTLE_FRAMES.delayStartGreen25Hold30));
-  });
-
-  it('Delay Start off while scheduled → stop; scheduled is not "heating"', async () => {
-    const scheduled = payload(OWN_KETTLE_FRAMES.extendedScheduled297);
-    const { thermostat, sub, lastSent } = await setup({ status: scheduled, overrides: { accessories: { delayStartSwitch: true } } });
-    expect(await sub(S.Switch, 'delay-start')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+  it('shows a delayed start set elsewhere (the VeSync app) as not heating', async () => {
+    const { thermostat } = await setup({ status: payload(OWN_KETTLE_FRAMES.extendedScheduled297) });
     expect(await thermostat().getCharacteristic(C.CurrentHeatingCoolingState).handleGetRequest()).toBe(C.CurrentHeatingCoolingState.OFF);
-    await sub(S.Switch, 'delay-start')!.getCharacteristic(C.On).handleSetRequest(false);
-    await until(() => lastSent(Cmd.STOP) !== undefined);
   });
 });
