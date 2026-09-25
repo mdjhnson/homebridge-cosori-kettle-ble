@@ -4,7 +4,7 @@
  *
  * HomeKit always works in °C internally; the kettle always works in °F.
  */
-import { MAX_SETPOINT_F, Mode, MIN_SETPOINT_F } from '../protocol/constants.js';
+import { MAX_SETPOINT_F, MIN_SETPOINT_F } from '../protocol/constants.js';
 import { clamp, cToF, fToC, round1 } from '../util/temperature.js';
 
 /** HomeKit TargetTemperature range for the kettle (°C). 40–100 °C = 104–212 °F. */
@@ -48,24 +48,6 @@ export class TemperatureSmoother {
     return this.shown;
   }
 }
-
-export interface PresetDefinition {
-  key: 'boil' | 'greenTea' | 'oolong' | 'coffee' | 'myBrew';
-  mode: number;
-  label: string;
-}
-
-/**
- * Service names must start and end with a letter or digit (HAP rejects e.g. "Boil (212°F)" and the Home app
- * may refuse the accessory), so labels are kept plain.
- */
-export const PRESETS: readonly PresetDefinition[] = [
-  { key: 'greenTea', mode: Mode.GREEN_TEA, label: 'Green Tea' },
-  { key: 'oolong', mode: Mode.OOLONG, label: 'Oolong' },
-  { key: 'coffee', mode: Mode.COFFEE, label: 'Coffee' },
-  { key: 'boil', mode: Mode.BOIL, label: 'Boil' },
-  { key: 'myBrew', mode: Mode.MY_BREW, label: 'MyBrew' },
-];
 
 /**
  * HAP FirmwareRevision must look like "x.y.z". The kettle reports software "R0007V0012" and hardware

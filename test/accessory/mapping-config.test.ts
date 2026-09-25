@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   currentFToC, firmwareRevision, targetCToF, targetFToC, TemperatureSmoother,
 } from '../../src/accessory/mapping.js';
-import { parseConfig } from '../../src/config.js';
+import { parseConfig, switchSubtype, switchTemperatureF } from '../../src/config.js';
 
 describe('temperature mapping', () => {
   it.each([[40, 104], [82, 180], [91, 196], [96, 205], [100, 212], [75, 167], [39, 104], [101, 212]])('%s °C → %s °F', (c, f) => {
@@ -64,7 +64,13 @@ describe('parseConfig', () => {
     expect(config).toMatchObject({
       name: 'Kettle', mac: 'FC:58:FA:0F:C3:26', dbusAddress: 'auto', protocolVersion: 'auto', temperatureUnit: 'F',
       connectionMode: 'persistent', pollIntervalSeconds: 5, keepWarmMinutes: 30, delayStartMinutes: 30, debug: false,
-      accessories: { onBaseSensor: true, keepWarmSwitch: true, delayStartSwitch: false, presets: { boil: true, greenTea: false } },
+      accessories: { onBaseSensor: true, keepWarmSwitch: true, delayStartSwitch: false },
+      switches: [
+        { name: 'Green Tea', temperatureF: 180, subtype: 'preset-greenTea' },
+        { name: 'Oolong', temperatureF: 195, subtype: 'preset-oolong' },
+        { name: 'Coffee', temperatureF: 205, subtype: 'preset-coffee' },
+        { name: 'Boil', temperatureF: 212, subtype: 'preset-boil' },
+      ],
     });
     expect(config!.registrationKey!.toString('hex')).toBe('9903e01a3c3baa8f6c71cbb5167e7d5f');
   });
@@ -98,5 +104,73 @@ describe('parseConfig', () => {
   it('accepts on-demand mode, Celsius and a forced protocol version', () => {
     expect(parseConfig({ ...base, connectionMode: 'onDemand', temperatureUnit: 'C', protocolVersion: '0' }).config)
       .toMatchObject({ connectionMode: 'onDemand', temperatureUnit: 'C', protocolVersion: 0 });
+  });
+
+  describe('temperature switches', () => {
+    it('parses a custom list, in °F or °C', () => {
+      const { config, warnings } = parseConfig({ ...base, switches: [
+        { name: 'Pour Over', temperature: 200 },
+        { name: '  White   Tea ', temperature: 80 }, // °C, extra spaces
+      ] });
+      expect(warnings).toEqual([]);
+      expect(config!.switches).toEqual([
+        { name: 'Pour Over', temperatureF: 200, subtype: 'preset-pourOver' },
+        { name: 'White Tea', temperatureF: 176, subtype: 'preset-whiteTea' },
+      ]);
+    });
+
+    it('allows an empty list (no switches)', () => {
+      const { config, warnings } = parseConfig({ ...base, switches: [] });
+      expect(config!.switches).toEqual([]);
+      expect(warnings).toEqual([]);
+    });
+
+    it('skips bad names, out-of-range temperatures and duplicate names, and warns about shared temperatures', () => {
+      const { config, warnings } = parseConfig({ ...base, switches: [
+        { name: 'Boil (212°F)', temperature: 212 },
+        { name: 'Too Hot', temperature: 230 },
+        { name: 'Between Units', temperature: 102 },
+        { name: 'Tea', temperature: 180 },
+        { name: 'tea', temperature: 190 },
+        { name: 'Green Tea', temperature: 181 },
+        { temperature: 200 },
+      ] });
+      expect(config!.switches.map((s) => s.name)).toEqual(['Tea', 'Green Tea']);
+      expect(warnings).toEqual([
+        'switch 1 ("Boil (212°F)"): the name must use only letters, digits and spaces; skipped',
+        'switch 2 ("Too Hot"): the temperature must be 104–212 °F or 40–100 °C; skipped',
+        'switch 3 ("Between Units"): the temperature must be 104–212 °F or 40–100 °C; skipped',
+        'switch 5 ("tea"): another switch already has this name; skipped',
+        'switch 6 ("Green Tea") and "Tea" heat to the same temperature, so both will show On together',
+        'switch 7: the name must use only letters, digits and spaces; skipped',
+      ]);
+    });
+
+    it('migrates the old preset checkboxes, keeping their tiles, and explains the MyBrew removal', () => {
+      const { config, warnings } = parseConfig({ ...base, accessories: { presets: { boil: true, greenTea: true, coffee: false, myBrew: true } } });
+      expect(config!.switches.map((s) => s.subtype)).toEqual(['preset-greenTea', 'preset-boil']);
+      expect(warnings).toHaveLength(2);
+      expect(warnings[0]).toMatch(/"accessories\.presets" is replaced .* \(Green Tea, Boil\)/);
+      expect(warnings[1]).toMatch(/MyBrew switch was removed/);
+      // An old config that never touched the checkboxes had only Boil.
+      expect(parseConfig({ ...base, accessories: { presets: {} } }).config!.switches.map((s) => s.name)).toEqual(['Boil']);
+    });
+
+    it('prefers the new list over the old checkboxes', () => {
+      const { config, warnings } = parseConfig({ ...base, switches: [{ name: 'Boil', temperature: 212 }], accessories: { presets: { oolong: true } } });
+      expect(config!.switches.map((s) => s.name)).toEqual(['Boil']);
+      expect(warnings).toEqual([]);
+    });
+
+    it('derives subtypes that match the old preset switches', () => {
+      expect(['Green Tea', 'Oolong', 'Coffee', 'Boil'].map(switchSubtype)).toEqual(['preset-greenTea', 'preset-oolong', 'preset-coffee', 'preset-boil']);
+      expect(switchSubtype('green  TEA')).toBe('preset-greenTea');
+    });
+
+    it('tells °C from °F by range', () => {
+      expect([switchTemperatureF(100), switchTemperatureF(40), switchTemperatureF(91), switchTemperatureF(104), switchTemperatureF(212)])
+        .toEqual([212, 104, 196, 104, 212]);
+      expect([switchTemperatureF(39), switchTemperatureF(101), switchTemperatureF(213)]).toEqual([undefined, undefined, undefined]);
+    });
   });
 });

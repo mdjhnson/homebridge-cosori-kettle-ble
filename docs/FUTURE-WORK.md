@@ -13,9 +13,9 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 
 **Open question to test first:** does registering a new key unpair the VeSync app? This is unknown. Test it on the maintainer's kettle with consent: `cosori-probe pair`, then check whether the app still connects. The worst case is re-adding the kettle in VeSync. Document the result in the README.
 
-## 2. Tile layout plan (decided 2026-09-24, not built yet)
+## 2. Tile layout plan (decided and built 2026-09-24)
 
-Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and user-defined temperature switches (was §2b). Nothing is built until the decisions at the end are made.
+**Built** (see README "Temperature switches"). As built: temperatures are read as °F or °C by range (the ranges don't overlap), so the default list works for Celsius users; switches sharing a temperature get a warning but are kept. Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and user-defined temperature switches (was §2b). Nothing is built until the decisions at the end are made.
 
 **Why:** the maintainer's setup shows nine tiles (thermostat, On Base, five presets, Keep Warm, Delay Start) and it's confusing. The preset switches are fixed; users want their own temperatures ("Pour-over 200 °F").
 
@@ -51,7 +51,7 @@ Config, rendered as an add/remove list in the Homebridge UI:
 - **On:** heats to that temperature. If it matches a kettle preset (within 1 °F, so Celsius values like 91 °C → Oolong work), the plugin sends that preset (F0). Otherwise it stores the temperature as MyBrew and heats in MyBrew mode (F3, then F0 mode 5), which is what the thermostat dial already does for non-preset temperatures.
 - **Shows On** while the kettle is heating or holding at that item's temperature (setpoint within 1 °F). **Off** stops the kettle. Two items with the same temperature would both show On, so validation warns about duplicates.
 - **Caveat to document:** non-preset items overwrite the MyBrew temperature stored on the kettle (the one the VeSync app's MyBrew button and the kettle's own MyBrew button use).
-- **Validation:** bad names, out-of-range temperatures and duplicates are reported in the log and skipped; they never crash Homebridge (same as the rest of the config).
+- **Validation:** bad names, out-of-range temperatures and duplicate names are reported in the log and skipped; switches sharing a temperature are kept with a warning. Nothing here can crash Homebridge (same as the rest of the config).
 - **Reference note** under the list in the settings form and in the README, so a deleted preset is easy to recreate:
 
   > **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. Any other temperature from 104–212 °F (40–100 °C) also works.

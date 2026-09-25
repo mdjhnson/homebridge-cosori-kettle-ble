@@ -18,6 +18,7 @@ Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — norma
 - [Registration key](#registration-key)
 - [Configuration](#configuration)
 - [HomeKit](#homekit)
+  - [Temperature switches](#temperature-switches)
 - [cosori-probe CLI](#cosori-probe-cli)
 - [The one-connection limitation](#the-one-connection-limitation)
 - [Troubleshooting](#troubleshooting)
@@ -237,7 +238,7 @@ Configure the plugin in the Homebridge UI (the form is generated from `config.sc
 | `accessories.onBaseSensor` | `true` | "On Base" occupancy sensor |
 | `accessories.keepWarmSwitch` | `true` | Keep Warm switch |
 | `accessories.delayStartSwitch` | `false` | Delay Start switch |
-| `accessories.presets.{boil,greenTea,oolong,coffee,myBrew}` | only `boil` | Preset switches |
+| `switches` | Green Tea 180, Oolong 195, Coffee 205, Boil 212 | Temperature switches: a list of `{ "name", "temperature" }`. See [Temperature switches](#temperature-switches) |
 | `dbusAddress` | `auto` | `auto` uses `/run/dbus-host/system_bus_socket` if present (Docker), else the system bus |
 | `adapter` | first adapter | Bluetooth adapter to use: its MAC address (recommended, stable across reboots) or a name like `hci1`. See [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With several adapters and no setting, the plugin logs a warning listing them |
 | `protocolVersion` | `auto` | `auto` detects it from firmware; `0` or `1` forces it |
@@ -251,15 +252,42 @@ Configure the plugin in the Homebridge UI (the form is generated from `config.sc
 |---|---|
 | **Thermostat** (main tile) | Set the target (40–100 °C / 104–212 °F) and switch Heat/Off. A target equal to a preset (180/195/205/212 °F) uses that preset; any other value is stored as the MyBrew temperature and heats in MyBrew mode. Changing the target while idle is remembered and applied when heating starts. Current temperature is smoothed to hide the sensor's ±1 °F flicker. |
 | **On Base** (occupancy) | "Occupied" while the kettle is on its base. Heating is refused while it is off the base. |
-| **Preset switches** | On = heating in that mode. Turning one on starts that preset; turning it off stops the kettle. |
+| **Temperature switches** | One switch per item in the `switches` list (default: the kettle's four presets). On heats to its temperature; it shows On while the kettle is heating or holding at that temperature; Off stops the kettle. |
 | **Keep Warm** | Whether heating holds the temperature for `keepWarmMinutes` afterwards. Toggling it while heating updates the running kettle. |
 | **Delay Start** | Schedules heating to the current target after `delayStartMinutes`, using the kettle's own timer, so it runs even if Bluetooth drops. On while scheduled; turning it off cancels. |
 
 The kettle's controls on the base and the VeSync app keep working. Changes made there show up in HomeKit on the next poll, or instantly when the kettle pushes them.
 
-**Schedules.** For "every weekday at 6:30", create a Home app automation (*Automation → A Time of Day → Kettle → Heat*). The Delay Start switch is for "start in N minutes" when you want the kettle to keep the time itself.
+### Temperature switches
 
-When the plugin cannot reach the kettle, its tiles show **No Response** after about 90 seconds (persistent mode). Commands tapped while it is reconnecting wait for up to 45 seconds.
+In the plugin settings, **Temperature switches** is a list you can edit: add, remove, rename, or change the temperature of each switch. Each item becomes a switch in the Home app.
+
+```json
+"switches": [
+  { "name": "Green Tea", "temperature": 180 },
+  { "name": "Oolong",    "temperature": 195 },
+  { "name": "Coffee",    "temperature": 205 },
+  { "name": "Boil",      "temperature": 212 }
+]
+```
+
+- **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. A temperature within 1 °F of a preset uses that preset. Any other temperature from 104–212 °F (40–100 °C) also works: the kettle stores it as its **MyBrew** temperature (which the kettle's MyBrew button and the VeSync app also use) and heats in MyBrew mode.
+- **°F or °C:** write temperatures in either unit. The ranges don't overlap (104–212 °F, 40–100 °C), so the plugin tells them apart by value, whatever `temperatureUnit` is set to.
+- **Names:** letters, digits and spaces only (HomeKit rejects other characters). Invalid items are skipped with a warning in the log.
+- **Keeping your tiles:** each tile is tied to its name. Reordering items or changing a temperature keeps the tile, its room and your automations. Renaming an item in the plugin settings creates a new tile, so rename in the Home app instead.
+- **Upgrading:** older versions had fixed preset checkboxes (`accessories.presets`). They keep working, turned into the list automatically (same tiles), with a note in the log. The **MyBrew switch was removed**: add a switch with your own temperature instead.
+- **Keep warm** is global: the Keep Warm switch and `keepWarmMinutes` apply to every switch.
+
+### Schedules and timing
+
+For "every weekday at 6:30", create a Home app automation (*Automation → A Time of Day → Kettle → Green Tea*), or ask Siri: "at 6:30 turn on Green Tea". This is the flexible way to pick a time. The Delay Start switch uses the kettle's own timer with a fixed delay (`delayStartMinutes`). It's less flexible, but it still fires if Homebridge or Bluetooth is down at that moment.
+
+**Commands during a dropped connection.** A command never runs much later than you asked:
+- If the kettle has been unreachable for **more than 15 s**, the command is refused right away and HomeKit shows **No Response**. It is not queued.
+- If the connection dropped **less than 15 s** ago, the command waits for the reconnect for **up to 45 s**, then runs. If the kettle is still unreachable after 45 s, the command is dropped, the log records an error, and the switch turns back off.
+- There's no retry after that. Note that HomeKit automations and Siri can't see a dropped command (the plugin answers HomeKit immediately, because a Bluetooth connection can take longer than HomeKit waits), so check the log if a scheduled kettle didn't heat.
+
+When the plugin cannot reach the kettle, its tiles show **No Response** after about 90 seconds (persistent mode).
 
 ## cosori-probe CLI
 

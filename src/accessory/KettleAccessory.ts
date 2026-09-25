@@ -3,7 +3,7 @@
  *
  *  - Thermostat (primary): current / target temperature, heat on/off
  *  - Occupancy sensor "On Base" (optional)
- *  - Switches: presets, Keep Warm, Delay Start (each optional)
+ *  - Switches: the user's temperature switches (default: the kettle presets), Keep Warm, Delay Start
  *
  * GET handlers answer from cached state (or "No Response" when it is stale). SET handlers validate,
  * update the tile optimistically and run the kettle command in the background: a BLE connection can
@@ -12,15 +12,14 @@
  */
 import type { API, CharacteristicValue, PlatformAccessory, Service, WithUUID } from 'homebridge';
 
-import type { KettlePluginConfig } from '../config.js';
+import type { KettlePluginConfig, TemperatureSwitch } from '../config.js';
 import type { ConnectionManager } from '../kettle/ConnectionManager.js';
 import { describeCompletion, type KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
 import { Mode, PRESET_TEMP_F } from '../protocol/constants.js';
 import { errorMessage } from '../util/async.js';
 import type { Logger } from '../util/log.js';
 import {
-  currentFToC, firmwareRevision, PRESETS, type PresetDefinition, TARGET_MAX_C, TARGET_MIN_C, TARGET_STEP_C, targetCToF, targetFToC,
-  TemperatureSmoother,
+  currentFToC, firmwareRevision, TARGET_MAX_C, TARGET_MIN_C, TARGET_STEP_C, targetCToF, targetFToC, TemperatureSmoother,
 } from './mapping.js';
 
 /** Names the Home app assigns by itself: the service type, optionally followed by a number. */
@@ -41,7 +40,7 @@ export class KettleAccessory {
   private readonly onBase?: Service;
   private readonly keepWarm?: Service;
   private readonly delayStart?: Service;
-  private readonly presetSwitches = new Map<PresetDefinition['key'], Service>();
+  private readonly temperatureSwitches: { item: TemperatureSwitch; service: Service }[] = [];
   private readonly smoother = new TemperatureSmoother();
   private readonly ctx: KettleContext;
   private infoUpdated = false;
@@ -94,16 +93,20 @@ export class KettleAccessory {
         ? C.OccupancyDetected.OCCUPANCY_NOT_DETECTED
         : C.OccupancyDetected.OCCUPANCY_DETECTED)));
 
-    // --- Preset switches -----------------------------------------------------------------------
-    for (const preset of PRESETS) {
-      const svc = this.optionalService(config.accessories.presets[preset.key], S.Switch, `preset-${preset.key}`, preset.label);
-      if (!svc) {
-        continue;
+    // --- Temperature switches ------------------------------------------------------------------
+    // Drop tiles for switches that were removed from the config (and the retired MyBrew switch).
+    const wanted = new Set(config.switches.map((item) => item.subtype));
+    for (const svc of [...accessory.services]) {
+      if (svc.UUID === S.Switch.UUID && svc.subtype?.startsWith('preset-') && !wanted.has(svc.subtype)) {
+        accessory.removeService(svc);
       }
-      this.presetSwitches.set(preset.key, svc);
-      svc.getCharacteristic(C.On)
-        .onGet(() => this.read((s) => s.active && s.mode === preset.mode))
-        .onSet((v) => this.setPreset(preset, Boolean(v)));
+    }
+    for (const item of config.switches) {
+      const service = this.optionalService(true, S.Switch, item.subtype, item.name)!;
+      this.temperatureSwitches.push({ item, service });
+      service.getCharacteristic(C.On)
+        .onGet(() => this.read((s) => this.switchOn(item, s)))
+        .onSet((v) => this.setSwitch(item, Boolean(v)));
     }
 
     // --- Keep warm -----------------------------------------------------------------------------
@@ -140,6 +143,11 @@ export class KettleAccessory {
 
   private displayTargetF(s: KettleStatus): number {
     return s.active || s.scheduled ? s.setpointF : this.ctx.targetF ?? s.setpointF;
+  }
+
+  /** On while the kettle is heating or holding at this switch's temperature (presets can differ by 1 °F). */
+  private switchOn(item: TemperatureSwitch, s: KettleStatus): boolean {
+    return s.active && Math.abs(s.setpointF - item.temperatureF) <= 1;
   }
 
   private keepWarmOn(s: KettleStatus): boolean {
@@ -196,30 +204,17 @@ export class KettleAccessory {
     }
   }
 
-  private setPreset(preset: PresetDefinition, on: boolean): void {
+  private setSwitch(item: TemperatureSwitch, on: boolean): void {
     this.assertCanCommand();
     if (!on) {
-      this.exec(`stop ${preset.key}`, (c) => c.stop(), () => !!this.manager.status?.active && this.manager.status.mode === preset.mode);
+      this.exec(`stop ${item.name}`, (c) => c.stop(), () => !!this.manager.status && this.switchOn(item, this.manager.status));
       return;
     }
     this.assertOnBase();
-    if (preset.mode === Mode.MY_BREW) {
-      const myTempF = this.manager.status?.myTempF ?? this.ctx.targetF;
-      if (!myTempF) {
-        this.log.warn(`${this.config.name}: MyBrew temperature unknown yet; set a target temperature first`);
-        setTimeout(() => this.resync(), 500);
-        return;
-      }
-      this.ctx.targetF = myTempF;
-      this.exec(`MyBrew ${myTempF}°F`, async (c) => {
-        await c.setMyTemp(myTempF);
-        await c.setMode(Mode.MY_BREW, { tempF: myTempF, holdSeconds: this.holdSeconds() });
-      });
-    } else {
-      this.ctx.targetF = PRESET_TEMP_F[preset.mode];
-      this.exec(`${preset.key}`, (c) => c.setMode(preset.mode, { holdSeconds: this.holdSeconds() }));
-    }
+    this.ctx.targetF = item.temperatureF;
     this.api.updatePlatformAccessories([this.accessory]);
+    // heatTo uses the kettle's preset when the temperature is one (±1 °F), otherwise MyBrew.
+    this.exec(`${item.name} (${item.temperatureF}°F)`, (c) => c.heatTo(item.temperatureF, this.holdSeconds()));
   }
 
   private setKeepWarm(on: boolean): void {
@@ -284,8 +279,8 @@ export class KettleAccessory {
       this.onBase?.updateCharacteristic(C.OccupancyDetected,
         s.onBase ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
     }
-    for (const preset of PRESETS) {
-      this.presetSwitches.get(preset.key)?.updateCharacteristic(C.On, s.active && s.mode === preset.mode);
+    for (const { item, service } of this.temperatureSwitches) {
+      service.updateCharacteristic(C.On, this.switchOn(item, s));
     }
     this.keepWarm?.updateCharacteristic(C.On, this.keepWarmOn(s));
     this.delayStart?.updateCharacteristic(C.On, s.scheduled);
