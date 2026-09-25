@@ -121,8 +121,8 @@
       "adapter": {
         "title": "Bluetooth adapter",
         "type": "string",
-        "placeholder": "hci0",
-        "description": "Leave empty for the default adapter."
+        "placeholder": "AA:BB:CC:DD:EE:FF or hci1",
+        "description": "Leave empty to use the first adapter. With a USB Bluetooth adapter, enter its MAC address (from `cosori-probe adapters` or `bluetoothctl list` on the host): names like hci1 can change after a reboot, the MAC can't."
       },
       "protocolVersion": {
         "title": "Protocol version",

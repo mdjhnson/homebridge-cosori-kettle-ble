@@ -12,6 +12,7 @@ Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — norma
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Host setup (Raspberry Pi / Debian)](#host-setup-raspberry-pi--debian)
+  - [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter)
 - [Docker changes](#docker-changes)
 - [Install (pre-release)](#install-pre-release)
 - [Registration key](#registration-key)
@@ -59,10 +60,31 @@ bluetoothctl power on
 - **Do not pair or trust the kettle in `bluetoothctl`.** The kettle uses its own application-level registration, not BLE bonding.
 - **No D-Bus policy file is needed** when the container runs as root (the default for `homebridge/homebridge`): BlueZ's stock policy (`/etc/dbus-1/system.d/bluetooth.conf`) already allows root. If you run the container rootless or with user-namespace remapping, install a policy for that user as described in the [node-ble README](https://github.com/chrvadala/node-ble#provide-permissions).
 - **Pi 4 radio coexistence:** the onboard chip shares its antenna between 2.4 GHz Wi-Fi and Bluetooth. If connections are flaky, put the Pi on Ethernet or 5 GHz Wi-Fi.
-- **Metal cases and USB 3 devices:** aluminium cases such as the Argon ONE shield the onboard antenna, and USB 3 drives and hubs emit noise in the 2.4 GHz band. In testing, a Pi 4 in an Argon ONE with a USB 3 SSD could not hear anything weaker than about -80 dBm, and could not see the kettle at 3 m.
-  - **Fix:** a USB Bluetooth 5.x adapter with a Realtek **RTL8761BU** chip (e.g. TP-Link UB500, ASUS USB-BT500). Its firmware ships in Raspberry Pi OS's `firmware-realtek` package.
-  - Put it on a **USB 2.0 port and a short extension cable**, outside the case and away from USB 3 devices.
-  - It appears as `hci1`; pass `--adapter hci1`, or disable the onboard radio with `dtoverlay=disable-bt` in `/boot/firmware/config.txt` so the adapter becomes the default.
+- **Metal cases and USB 3 devices:** aluminium cases such as the Argon ONE shield the onboard antenna, and USB 3 drives and hubs emit noise in the 2.4 GHz band. In testing, a Pi 4 in an Argon ONE with a USB 3 SSD could not hear anything weaker than about -80 dBm, lost the connection within seconds to minutes of the kettle starting to heat, and then could not see the kettle at all. The fix is a USB Bluetooth adapter; see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With one, the same Pi held the connection through a full heat-and-hold cycle.
+
+### Using a USB Bluetooth adapter
+
+Recommended for any Pi in a metal case, or whenever connections drop or the kettle isn't found.
+
+1. **Buy** a USB Bluetooth 5.x adapter with a Realtek **RTL8761BU** chip (e.g. TP-Link UB500, ASUS USB-BT500). Its firmware ships in Raspberry Pi OS's `firmware-realtek` package (`sudo apt install firmware-realtek` if it's missing).
+2. **Plug it into a USB 2.0 port** (black, not blue), ideally on a short extension cable outside the case and away from USB 3 drives.
+3. **Check that the host sees it and power it on.** New adapters often start soft-blocked by rfkill, and BlueZ can't power on a blocked adapter:
+
+   ```sh
+   bluetoothctl list                                  # should now list two controllers
+   sudo rfkill unblock bluetooth && sleep 2 && bluetoothctl power on
+   ```
+
+   `journalctl -k | grep -i rtl` should show `rtl8761bu_fw.bin` loading. If `power on` says `org.bluez.Error.Busy`, wait a second and run it again.
+4. **Find its MAC address:** `docker exec homebridge cosori-probe adapters` (or `bluetoothctl list` on the host). The onboard Pi radio usually starts with `B8:27:EB`, `DC:A6:32`, `E4:5F:01`, `D8:3A:DD` or `2C:CF:67` (Raspberry Pi's vendor prefixes). The USB adapter is the other one.
+5. **Set the plugin's `adapter` setting to that MAC address** (the "Bluetooth adapter" field in the plugin settings), then restart the plugin's child bridge. Use the MAC rather than `hci1`: `hciN` numbers follow the order the adapters come up, so after a reboot the USB adapter can become `hci0` and the plugin would silently go back to the weak onboard radio. The log then shows `Using Bluetooth adapter hci1 (AA:BB:…)`.
+6. **Optional: turn off the onboard Bluetooth** if nothing else on the Pi uses it. Then there's only one adapter to pick from:
+
+   ```sh
+   echo 'dtoverlay=disable-bt' | sudo tee -a /boot/firmware/config.txt && sudo systemctl disable hciuart && sudo reboot
+   ```
+
+   This appends to the end of `config.txt`, which on Raspberry Pi OS is the `[all]` section; check with `tail /boot/firmware/config.txt` first if you've edited it. The reboot restarts Homebridge. Afterwards `bluetoothctl list` should show only the USB adapter. Keep the MAC in the `adapter` setting anyway. It still matches after the adapter is renumbered to `hci0`.
 
 ## Docker changes
 
@@ -216,7 +238,7 @@ Configure the plugin in the Homebridge UI (the form is generated from `config.sc
 | `accessories.delayStartSwitch` | `false` | Delay Start switch |
 | `accessories.presets.{boil,greenTea,oolong,coffee,myBrew}` | only `boil` | Preset switches |
 | `dbusAddress` | `auto` | `auto` uses `/run/dbus-host/system_bus_socket` if present (Docker), else the system bus |
-| `adapter` | default | BlueZ adapter, e.g. `hci1` for a USB Bluetooth adapter |
+| `adapter` | first adapter | Bluetooth adapter to use: its MAC address (recommended, stable across reboots) or a name like `hci1`. See [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With several adapters and no setting, the plugin logs a warning listing them |
 | `protocolVersion` | `auto` | `auto` detects it from firmware; `0` or `1` forces it |
 | `debug` | `false` | Log every Bluetooth frame |
 
@@ -248,6 +270,7 @@ docker exec -it homebridge cosori-probe <command> [args] [options]
 
 | Command | Writes to kettle? | Purpose |
 |---|---|---|
+| `adapters` | no | List the host's Bluetooth adapters with MAC address and power state, for the `adapter` setting |
 | `scan [--all] [--duration 10]` | no | List nearby kettles, matched by name or Etekcity manufacturer ID, with MAC and RSSI |
 | `info <mac>` | no | Connect, read model/firmware (Device Information Service), detect protocol version, show GATT flags |
 | `key-from-log <file>` | — (offline) | Find and verify the app's key in a PacketLogger capture (`.pklg`, or a text export with raw bytes) |
@@ -262,7 +285,7 @@ docker exec -it homebridge cosori-probe <command> [args] [options]
 | `stop <mac> --key K --yes` | F4 | Stop heating, or cancel a scheduled delay |
 | `decode-log <file.pklg>` | — (offline) | List every frame in a PacketLogger capture, decoded, key redacted |
 
-Common options: `--raw` (print every frame in hex), `--verbose`, `--dbus <path|address>`, `--adapter hci1`, `--protocol 0|1`, `--write-mode request|command`. You can put the key in the `COSORI_KEY` environment variable instead of passing `--key`:
+Common options: `--raw` (print every frame in hex), `--verbose`, `--dbus <path|address>`, `--adapter <MAC|hciN>`, `--protocol 0|1`, `--write-mode request|command`. You can put the key in the `COSORI_KEY` environment variable instead of passing `--key`:
 
 ```sh
 docker exec -it -e COSORI_KEY=7f86… homebridge cosori-probe watch AA:BB:CC:DD:EE:FF --raw
@@ -290,9 +313,11 @@ The plugin will offer an **on-demand** connection mode that connects briefly for
 |---|---|
 | `D-Bus connection … failed: connect ENOENT` | The host socket isn't mounted. Add `- /run/dbus:/run/dbus-host:ro` and recreate the container. |
 | `BlueZ adapter lookup … timed out` / `org.bluez was not provided` | `bluetoothd` isn't running on the host: `sudo systemctl enable --now bluetooth`. |
-| `adapter is powered off` | `sudo rfkill unblock bluetooth && bluetoothctl power on` on the host. |
+| `adapter … is powered off` | `sudo rfkill unblock bluetooth && sleep 2 && bluetoothctl power on` on the host. A newly plugged-in USB adapter usually starts soft-blocked. |
+| `Bluetooth adapter "…" not found. Available: …` | The `adapter` setting doesn't match any adapter. Check the list in the message (or `cosori-probe adapters`), and use the adapter's MAC address. |
+| `Found 2 Bluetooth adapters … using the first` (warning) | Set `adapter` to the MAC address of the one you want. See [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). |
 | `AccessDenied` | The container isn't running as root, or AppArmor is blocking it. See [Host setup](#host-setup-raspberry-pi--debian) and the `security_opt` row in [Docker changes](#docker-changes). |
-| `not found while scanning` / `scan` finds nothing | The kettle is out of range or unpowered, or the VeSync app is connected to it. **Raspberry Pi 4 in a metal case (e.g. Argon ONE):** the onboard antenna is heavily shielded and may not hear the kettle even at 3 m. Use a USB Bluetooth adapter on a short extension cable (see below). |
+| `not found while scanning` / `scan` finds nothing | The kettle is out of range or unpowered, or the VeSync app is connected to it. **Raspberry Pi 4 in a metal case (e.g. Argon ONE):** the onboard antenna is heavily shielded and may not hear the kettle even at 3 m. Use a USB Bluetooth adapter on a short extension cable (see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter)). |
 | `le-connection-abort-by-local` / connect timeouts | Usually radio coexistence on the Pi 4 (see Host setup), or discovery running during connect. Retry. |
 | `kettle rejected the registration key` | Wrong key. Re-capture it (Option A) or pair (Option B). |
 | `not in pairing mode` | Hold the MyBrew button until the kettle signals pairing mode, then retry. |

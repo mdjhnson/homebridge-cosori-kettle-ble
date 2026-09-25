@@ -80,6 +80,19 @@ export function parseConfig(raw: Record<string, unknown>): ParsedConfig {
     warnings.push(`unknown connectionMode "${String(raw.connectionMode)}"; using persistent`);
   }
 
+  let adapter: string | undefined;
+  if (typeof raw.adapter === 'string' && raw.adapter.trim()) {
+    const value = raw.adapter.trim();
+    const asMac = value.toUpperCase().replace(/-/g, ':');
+    if (MAC_RE.test(asMac)) {
+      adapter = asMac;
+    } else if (/^hci\d+$/i.test(value)) {
+      adapter = value.toLowerCase();
+    } else {
+      warnings.push('"adapter" must be an adapter MAC address (AA:BB:CC:DD:EE:FF, recommended) or a name like hci1; using the first adapter');
+    }
+  }
+
   const protocolRaw = raw.protocolVersion;
   const protocolVersion = protocolRaw === 0 || protocolRaw === '0' ? 0 : protocolRaw === 1 || protocolRaw === '1' ? 1 : 'auto';
 
@@ -95,7 +108,7 @@ export function parseConfig(raw: Record<string, unknown>): ParsedConfig {
       mac,
       registrationKey,
       dbusAddress: typeof raw.dbusAddress === 'string' && raw.dbusAddress.trim() ? raw.dbusAddress.trim() : 'auto',
-      adapter: typeof raw.adapter === 'string' && raw.adapter.trim() ? raw.adapter.trim() : undefined,
+      adapter,
       protocolVersion,
       temperatureUnit: raw.temperatureUnit === 'C' ? 'C' : 'F',
       connectionMode: mode,

@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 
-import { NodeBleTransport, resolveDbusAddress, type ScanResult, type WriteMode } from '../ble/NodeBleTransport.js';
+import { AdapterNotFoundError, NodeBleTransport, resolveDbusAddress, type ScanResult, type WriteMode } from '../ble/NodeBleTransport.js';
 import { InvalidRegistrationKeyError, NotInPairingModeError } from '../kettle/errors.js';
 import { describeCompletion, KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
 import {
@@ -28,6 +28,7 @@ const USAGE = `cosori-probe — Cosori Smart Gooseneck Kettle BLE probe
 Usage: cosori-probe <command> [args] [options]
 
 Read-only:
+  adapters                     List the host's Bluetooth adapters (name, MAC, powered) for the "adapter" setting
   scan                         Scan for BLE devices (Cosori kettles highlighted; --all shows everything)
   info <mac>                   Connect, read device info / firmware, detect protocol version, show GATT flags
   key-from-log <file>          Find the VeSync app's registration key in a PacketLogger capture (.pklg, or text export) (offline)
@@ -52,7 +53,7 @@ Changes kettle state (require --yes; documented commands only):
 Options:
   --key <hex>                  32-hex-char registration key (or env COSORI_KEY)
   --dbus <address|path|auto>   D-Bus system bus (default auto: /run/dbus-host/system_bus_socket if present)
-  --adapter <hciN>             BlueZ adapter (default: first adapter)
+  --adapter <MAC|hciN>         BlueZ adapter (default: first adapter; list them with the adapters command)
   --protocol <auto|0|1>        Payload version byte (default auto from firmware)
   --write-mode <auto|request|command>
                                GATT write type for FFF2 (default auto)
@@ -179,6 +180,9 @@ function hintFor(err: unknown): string | undefined {
   if (/AccessDenied|not allowed/i.test(msg)) {
     return 'D-Bus policy denied access to BlueZ. Run as root in the container, or install a BlueZ D-Bus policy for this user (see README).';
   }
+  if (err instanceof AdapterNotFoundError) {
+    return 'Run `cosori-probe adapters` to list adapters, then pass --adapter with the MAC address of the one to use.';
+  }
   if (/adapter lookup|No adapter|ServiceUnknown|org\.bluez was not provided/i.test(msg)) {
     return 'BlueZ not reachable. On the host: `systemctl status bluetooth`, `bluetoothctl show`.';
   }
@@ -244,6 +248,24 @@ async function reportAfterWrite(client: KettleClient, before: KettleStatus, log:
   await delay(1500);
   const after = await client.poll();
   log.info(`After:  ${formatStatus(after)}`);
+}
+
+async function cmdAdapters(flags: Flags, log: Logger): Promise<void> {
+  const adapters = await NodeBleTransport.listAdapters({ dbusAddress: flags.dbus ?? 'auto', log });
+  if (adapters.length === 0) {
+    log.warn('No Bluetooth adapters found. Check `bluetoothctl list` and `journalctl -k | grep -i bluetooth` on the host.');
+    return;
+  }
+  adapters.forEach((a, i) => {
+    const power = a.powered === undefined ? '?' : a.powered ? 'yes' : 'no';
+    console.log(`${a.name}  ${a.address ?? '(unknown address)'}  powered=${power}${i === 0 ? '  (used when "adapter" is empty)' : ''}`);
+  });
+  if (adapters.some((a) => a.powered === false)) {
+    log.info('To power one on, on the host: `sudo rfkill unblock bluetooth`, then `bluetoothctl power on`.');
+  }
+  if (adapters.length > 1) {
+    log.info('Several adapters: put the MAC address of the one to use in the plugin\'s "adapter" setting (hciN names can change after a reboot).');
+  }
 }
 
 function looksLikeKettle(r: ScanResult): boolean {
@@ -648,6 +670,9 @@ async function main(argv: string[]): Promise<number> {
 
   try {
     switch (command) {
+    case 'adapters':
+      await cmdAdapters(flags, log);
+      break;
     case 'scan':
       await cmdScan(flags, log);
       break;

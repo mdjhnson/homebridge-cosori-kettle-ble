@@ -26,7 +26,7 @@ export type WriteMode = 'auto' | 'request' | 'command';
 export interface NodeBleTransportOptions {
   /** e.g. "unix:path=/run/dbus-host/system_bus_socket". "auto" (default) picks the Docker mount if present, else the system default. */
   dbusAddress?: string;
-  /** BlueZ adapter name, e.g. "hci0". Default adapter if omitted. */
+  /** BlueZ adapter: an hciN name or the adapter's MAC address (stable across reboots). First adapter if omitted. */
   adapter?: string;
   /** How long to scan for the kettle when BlueZ doesn't already know it. */
   discoveryTimeoutMs?: number;
@@ -105,16 +105,91 @@ async function createSession(dbusAddress: string | undefined, log: Logger): Prom
   return session;
 }
 
-async function lookupAdapter(session: Session, name: string | undefined): Promise<NodeBle.Adapter> {
-  const { bluetooth } = session;
+const ADAPTER_MAC_RE = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/;
+
+/** True if an `adapter` option is a controller MAC address rather than an hciN name. */
+export function isAdapterAddress(option: string): boolean {
+  return ADAPTER_MAC_RE.test(option.toUpperCase().replace(/-/g, ':'));
+}
+
+/** The slice of node-ble's Bluetooth object that adapter selection needs (kept small for tests). */
+export interface AdapterSource<A extends { getAddress(): Promise<string> }> {
+  adapters(): Promise<string[]>;
+  getAdapter(name: string): Promise<A>;
+}
+
+export interface AdapterInfo {
+  name: string;
+  address?: string;
+  powered?: boolean;
+}
+
+export interface AdapterSelection<A> {
+  adapter: A;
+  name: string;
+  address?: string;
+  /** Every adapter BlueZ reported, for logging. */
+  all: AdapterInfo[];
+}
+
+export class AdapterNotFoundError extends Error {}
+
+async function describeAdapters<A extends { getAddress(): Promise<string> }>(
+  source: AdapterSource<A>,
+): Promise<{ info: AdapterInfo; adapter: A }[]> {
+  const names = await source.adapters();
+  const out: { info: AdapterInfo; adapter: A }[] = [];
+  for (const name of names) {
+    const adapter = await source.getAdapter(name);
+    const address = await adapter.getAddress().then((a) => a.toUpperCase(), () => undefined);
+    out.push({ info: { name, address }, adapter });
+  }
+  return out;
+}
+
+export function formatAdapters(all: AdapterInfo[]): string {
+  return all.length ? all.map((a) => (a.address ? `${a.name} (${a.address})` : a.name)).join(', ') : 'none';
+}
+
+/**
+ * Pick a BlueZ adapter. `wanted` may be an hciN name or the controller's MAC address. hciN numbers
+ * follow probe order and can change across reboots when there are several adapters; a MAC can't.
+ * With no `wanted`, the first adapter is used (the same one node-ble's defaultAdapter() returns).
+ */
+export async function selectAdapter<A extends { getAddress(): Promise<string> }>(
+  source: AdapterSource<A>,
+  wanted: string | undefined,
+): Promise<AdapterSelection<A>> {
+  const found = await describeAdapters(source);
+  const all = found.map((f) => f.info);
+  if (found.length === 0) {
+    throw new AdapterNotFoundError('no Bluetooth adapters found in BlueZ (is one plugged in and powered? `bluetoothctl list` on the host)');
+  }
+  let match: { info: AdapterInfo; adapter: A } | undefined;
+  if (!wanted) {
+    match = found[0];
+  } else if (isAdapterAddress(wanted)) {
+    const address = wanted.toUpperCase().replace(/-/g, ':');
+    match = found.find((f) => f.info.address === address);
+  } else {
+    match = found.find((f) => f.info.name === wanted);
+  }
+  if (!match) {
+    throw new AdapterNotFoundError(`Bluetooth adapter "${wanted}" not found. Available: ${formatAdapters(all)}`);
+  }
+  return { adapter: match.adapter, name: match.info.name, address: match.info.address, all };
+}
+
+async function lookupAdapter(session: Session, wanted: string | undefined): Promise<AdapterSelection<NodeBle.Adapter>> {
   return Promise.race([
-    withTimeout(
-      name ? bluetooth.getAdapter(name) : bluetooth.defaultAdapter(),
-      10_000,
-      'BlueZ adapter lookup (is bluetoothd running on the host?)',
-    ),
+    withTimeout(selectAdapter(session.bluetooth, wanted), 10_000, 'BlueZ adapter lookup (is bluetoothd running on the host?)'),
     session.failure,
   ]);
+}
+
+function poweredOffError(selection: AdapterSelection<unknown>): Error {
+  const label = formatAdapters([selection]);
+  return new Error(`Bluetooth adapter ${label} is powered off (on the host: \`sudo rfkill unblock bluetooth\`, then \`bluetoothctl power on\`)`);
 }
 
 async function startDiscoverySafe(adapter: NodeBle.Adapter): Promise<boolean> {
@@ -149,6 +224,7 @@ export class NodeBleTransport extends EventEmitter implements KettleTransport {
   private resolvedWriteType: 'request' | 'command' = 'request';
   private isConnected = false;
   private closing = false;
+  private adapterNote?: string;
   private readonly log: Logger;
   private readonly mac: string;
 
@@ -183,11 +259,28 @@ export class NodeBleTransport extends EventEmitter implements KettleTransport {
 
   private async getAdapter(): Promise<NodeBle.Adapter> {
     const session = await this.getSession();
-    const adapter = await lookupAdapter(session, this.options.adapter);
-    if (!(await adapter.isPowered())) {
-      throw new Error('Bluetooth adapter is powered off (try `bluetoothctl power on` / `rfkill unblock bluetooth` on the host)');
+    const selection = await lookupAdapter(session, this.options.adapter);
+    this.noteAdapter(selection);
+    if (!(await selection.adapter.isPowered())) {
+      throw poweredOffError(selection);
     }
-    return adapter;
+    return selection.adapter;
+  }
+
+  /** Log which adapter is in use once, and again whenever it changes (e.g. hciN renumbered after a reboot). */
+  private noteAdapter(selection: AdapterSelection<unknown>): void {
+    const key = `${selection.name}/${selection.address ?? ''}/${selection.all.length}`;
+    if (key === this.adapterNote) {
+      return;
+    }
+    this.adapterNote = key;
+    const label = formatAdapters([selection]);
+    if (!this.options.adapter && selection.all.length > 1) {
+      this.log.warn(`Found ${selection.all.length} Bluetooth adapters (${formatAdapters(selection.all)}); using the first, ${label}. `
+        + 'Set "adapter" to the MAC address of the one you want so the choice survives reboots.');
+    } else {
+      this.log.info(`Using Bluetooth adapter ${label}`);
+    }
   }
 
   /** Find the device object in BlueZ, running discovery if it isn't already known. */
@@ -369,14 +462,34 @@ export class NodeBleTransport extends EventEmitter implements KettleTransport {
     }
   }
 
+  /** List the Bluetooth adapters BlueZ knows, with address and power state. */
+  static async listAdapters(options: Pick<NodeBleTransportOptions, 'dbusAddress' | 'log'> = {}): Promise<AdapterInfo[]> {
+    const session = await createSession(resolveDbusAddress(options.dbusAddress), options.log ?? silentLogger);
+    try {
+      const found = await Promise.race([
+        withTimeout(describeAdapters(session.bluetooth), 10_000, 'BlueZ adapter lookup (is bluetoothd running on the host?)'),
+        session.failure,
+      ]);
+      const out: AdapterInfo[] = [];
+      for (const { info, adapter } of found) {
+        out.push({ ...info, powered: await adapter.isPowered().catch(() => undefined) });
+      }
+      return out;
+    } finally {
+      session.destroy();
+    }
+  }
+
   /** Scan for nearby devices. Returns everything BlueZ saw; callers filter by name. */
   static async scan(options: NodeBleTransportOptions & { durationMs?: number } = {}): Promise<ScanResult[]> {
     const log = options.log ?? silentLogger;
     const session = await createSession(resolveDbusAddress(options.dbusAddress), log);
     try {
-      const adapter = await lookupAdapter(session, options.adapter);
+      const selection = await lookupAdapter(session, options.adapter);
+      const { adapter } = selection;
+      log.debug(`Scanning on ${formatAdapters([selection])}`);
       if (!(await adapter.isPowered())) {
-        throw new Error('Bluetooth adapter is powered off');
+        throw poweredOffError(selection);
       }
       const startedHere = await startDiscoverySafe(adapter);
       await delay(options.durationMs ?? 10_000);

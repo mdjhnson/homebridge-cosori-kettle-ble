@@ -59,10 +59,39 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 
 ## 3. Radio robustness
 
-- A Pi 4 in an aluminium Argon ONE case, with a USB 3 SSD attached, can't hear below about -80 dBm, and the kettle sits right at the edge. **Fix:** a USB Bluetooth 5 adapter on the RTL8761BU chip (TP-Link UB500 / ASUS USB-BT500), on a USB 2.0 port with an extension cable. Its firmware is already on the Pi. Use `adapter: "hci1"`, or `dtoverlay=disable-bt`.
+- ~~A Pi 4 in an aluminium Argon ONE case can't hold the link.~~ **Done 2026-09-24:** a USB RTL8761BU adapter fixed it (see STATUS). The plugin now accepts the adapter's MAC address in `adapter`, logs which adapter it uses, warns when several exist and none is set, and `cosori-probe adapters` lists them. README has a step-by-step "Using a USB Bluetooth adapter" section.
+- Log a warning with the elapsed time when the link has been down a long time, even between the attempt-count thresholds (1/5/20/50). The log went quiet for over an hour during the 2026-09-23 drop, which hid that it was still failing. _(Suggested, not agreed.)_
+- Cancel the BlueZ connect properly when our 30 s timeout fires (today `withTimeout` abandons `device.connect()` while BlueZ keeps trying). Easier once we own the D-Bus calls (§3b). _(Suggested, not agreed.)_
+- Opt-in adapter power-cycle recovery after N minutes of "not found". Invasive (affects every Bluetooth user on the host), so only if a stuck-controller failure is ever confirmed. _(Suggested, not agreed.)_
+- Add the Mac CoreBluetooth scanner used during diagnosis (about 60 lines of Swift, read-only, prints the kettle's RSSI) to the repo, e.g. `tools/mac-blescan/`, as an independent observer. _(Suggested.)_
 - Connects take 10–40 s partly because BlueZ forgets the kettle about 30 s after disconnect, forcing a rescan. Options: keep discovery primed, or document raising `TemporaryTimeout` in `/etc/bluetooth/main.conf`.
 - On-demand mode is impractical while connects take longer than HomeKit's ~10 s timeout.
-- If the BLE layer gets reworked anyway, prefer a D-Bus/BLE library with no native optional dependencies. That would remove the harmless `usocket` `gyp ERR!` from every npm install log (STATUS open issue 5).
+- If the BLE layer gets reworked anyway, prefer a D-Bus/BLE library with no native optional dependencies. That would remove the harmless `usocket` `gyp ERR!` from every npm install log (STATUS open issue 5). See §3b.
+
+## 3b. Replace `node-ble` (agreed 2026-09-24, moderate job, not started)
+
+**Why:** every deprecated-package warning on install (`request`, `tar@6`, `glob@7`, `rimraf@3`, `npmlog`, `gauge`, `are-we-there-yet`, `har-validator`, `uuid@3`, `inflight`) comes from one optional chain: `node-ble 1.13.0 → dbus-next 0.10.2 → usocket 0.3.0 (optional, native) → node-gyp 7`. None of it runs. The real problem is staleness: `dbus-next` hasn't been released since 2022, and its `xml2js@0.4` has a known prototype-pollution advisory (fixed in 0.5+).
+
+**Libraries checked on npm (2026-09-24), all pure JS with no native or optional deps:**
+
+| Library | What it is | Notes |
+|---|---|---|
+| `@homebridge/dbus-native` 0.7.9 | Raw D-Bus client (xml2js 0.6) | Maintained by the Homebridge org. Callback-style API, more work to wrap. Best long-term bet. |
+| `@jellybrick/dbus-next` 0.11.3 | Maintained `dbus-next` fork (fast-xml-parser 5) | Same proxy/Variant API as `dbus-next`. Single maintainer. |
+| `@naugehyde/node-ble` 1.13.5 | `node-ble` fork on `@jellybrick/dbus-next` ^0.10.3 | **Drop-in** (change the import). Single maintainer, fork of a fork. |
+| `dbus-native` 0.15.2 | Original, revived by its author | Five releases in one day (2026-07-30). Wait for it to settle. |
+
+Rejected: noble variants (native HCI sockets, bypass BlueZ, need container privileges); `@clebert/node-bluez`, `bluez`, `@tanislav000/bluez`, `blauzahn` (stale, native, or single-person forks).
+
+**Recommendation:** a small in-house `BluezTransport` on `@homebridge/dbus-native`, behind the existing `Transport` interface, so `KettleClient`, `ConnectionManager`, the accessory and the tests don't change. The plugin uses only:
+- `org.bluez.Adapter1`: find the adapter (keep the MAC-or-hciN selection), `StartDiscovery`/`StopDiscovery`, wait for `/org/bluez/hciN/dev_…` via `ObjectManager.GetManagedObjects` plus `InterfacesAdded`.
+- `org.bluez.Device1`: `Connect`, `Disconnect`, `Connected` and `ServicesResolved` (GATT discovery = wait for `ServicesResolved=true`).
+- `GattService1`/`GattCharacteristic1`: find FFF0/FFF1/FFF2 by UUID; `StartNotify` and `Value` via `PropertiesChanged`; `WriteValue(bytes, {type})`; `ReadValue` for the DIS characteristics.
+- Keep the Docker socket auto-detect and the bus `'error'` handler.
+
+**Fallback:** `@naugehyde/node-ble` as a 10-minute drop-in that clears the warnings.
+
+**Plan:** (1) unit tests around a mocked bus; (2) implement, swap the dependency, check `npm ci` shows no deprecation warnings; (3) update STATUS issue 5, README Troubleshooting (drop the usocket row), §3 and the CLAUDE.md layout table; (4) hardware checks, asking first and with water in the kettle for anything that heats: connect time, notifications, `cosori-probe info`, a documented command with `--cancel-after`, disconnect/reconnect, child-bridge restart.
 
 ## 4. Protocol unknowns worth resolving (need captures)
 

@@ -26,11 +26,11 @@ Before every commit, run lint, typecheck, test and build, and **gate the commit 
 | Path | What |
 |---|---|
 | `src/protocol/` | Pure protocol: constants, checksum, framing plus streaming parser, command builders, status decoders, key handling, `.pklg` reader, V0/V1 detection |
-| `src/ble/` | `Transport` interface; `NodeBleTransport` (BlueZ over D-Bus, Docker socket auto-detect) |
+| `src/ble/` | `Transport` interface; `NodeBleTransport` (BlueZ over D-Bus, Docker socket auto-detect, adapter selection by MAC or hciN) |
 | `src/kettle/` | `KettleClient` (seq/ACK, hello/register, commands, status events); `ConnectionManager` (persistent/on-demand loop, backoff, command queue) |
 | `src/accessory/` | `KettleAccessory` (HAP services); `mapping.ts` (°F↔°C, smoothing, names), pure and unit-tested |
 | `src/platform.ts`, `src/config.ts` | Homebridge platform; defensive config parsing |
-| `src/cli/probe.ts` | `cosori-probe`: scan, info, key-from-log, key-from-packets, decode-log, status, watch, pair, set-mybrew, hold, start, delay, stop |
+| `src/cli/probe.ts` | `cosori-probe`: adapters, scan, info, key-from-log, key-from-packets, decode-log, status, watch, pair, set-mybrew, hold, start, delay, stop |
 | `test/fixtures/captures.ts` | **Real captured frames** (upstream projects, plus `OWN_KETTLE_FRAMES` from the maintainer's kettle). Add every new real capture here |
 | `test/kettle/FakeTransport.ts` | Scriptable fake kettle used by client, manager and accessory tests |
 | `test/accessory/harness.ts` | Real `@homebridge/hap-nodejs` with a fake PlatformAccessory, for testing GET/SET handlers |

@@ -86,6 +86,15 @@ describe('parseConfig', () => {
     expect(warnings).toHaveLength(3);
   });
 
+  it('accepts an adapter MAC (normalised) or hciN name, and warns on anything else', () => {
+    expect(parseConfig({ ...base, adapter: ' 00-1a-7d-da-71-13 ' }).config!.adapter).toBe('00:1A:7D:DA:71:13');
+    expect(parseConfig({ ...base, adapter: 'HCI1' }).config!.adapter).toBe('hci1');
+    expect(parseConfig({ ...base, adapter: '' }).config!.adapter).toBeUndefined();
+    const { config, warnings } = parseConfig({ ...base, adapter: 'usb dongle' });
+    expect(config!.adapter).toBeUndefined();
+    expect(warnings).toEqual([expect.stringMatching(/"adapter" must be/)]);
+  });
+
   it('accepts on-demand mode, Celsius and a forced protocol version', () => {
     expect(parseConfig({ ...base, connectionMode: 'onDemand', temperatureUnit: 'C', protocolVersion: '0' }).config)
       .toMatchObject({ connectionMode: 'onDemand', temperatureUnit: 'C', protocolVersion: 0 });
