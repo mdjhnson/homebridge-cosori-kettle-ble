@@ -21,6 +21,7 @@ Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — norma
 - [cosori-probe CLI](#cosori-probe-cli)
 - [The one-connection limitation](#the-one-connection-limitation)
 - [Troubleshooting](#troubleshooting)
+  - [Occasional disconnects](#occasional-disconnects)
 - [Protocol notes](#protocol-notes)
 - [Development](#development)
 - [Credits](#credits)
@@ -60,7 +61,7 @@ bluetoothctl power on
 - **Do not pair or trust the kettle in `bluetoothctl`.** The kettle uses its own application-level registration, not BLE bonding.
 - **No D-Bus policy file is needed** when the container runs as root (the default for `homebridge/homebridge`): BlueZ's stock policy (`/etc/dbus-1/system.d/bluetooth.conf`) already allows root. If you run the container rootless or with user-namespace remapping, install a policy for that user as described in the [node-ble README](https://github.com/chrvadala/node-ble#provide-permissions).
 - **Pi 4 radio coexistence:** the onboard chip shares its antenna between 2.4 GHz Wi-Fi and Bluetooth. If connections are flaky, put the Pi on Ethernet or 5 GHz Wi-Fi.
-- **Metal cases and USB 3 devices:** aluminium cases such as the Argon ONE shield the onboard antenna, and USB 3 drives and hubs emit noise in the 2.4 GHz band. In testing, a Pi 4 in an Argon ONE with a USB 3 SSD could not hear anything weaker than about -80 dBm, lost the connection within seconds to minutes of the kettle starting to heat, and then could not see the kettle at all. The fix is a USB Bluetooth adapter; see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With one, the same Pi held the connection through a full heat-and-hold cycle.
+- **Metal cases and USB 3 devices:** aluminium cases such as the Argon ONE shield the onboard antenna, and USB 3 drives and hubs emit noise in the 2.4 GHz band. In testing, a Pi 4 in an Argon ONE with a USB 3 SSD could not hear anything weaker than about -80 dBm, lost the connection within seconds to minutes of the kettle starting to heat, and then could not see the kettle at all. The fix is a USB Bluetooth adapter; see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With one on an extension cable about 10 ft from the kettle, the same Pi connects in about 5 s instead of 10–40 s and reconnects by itself in about 4 s, although the link still drops every few minutes (see [Occasional disconnects](#occasional-disconnects)).
 
 ### Using a USB Bluetooth adapter
 
@@ -318,11 +319,24 @@ If you still want to use the VeSync app, set `connectionMode` to `onDemand`: the
 | `Found 2 Bluetooth adapters … using the first` (warning) | Set `adapter` to the MAC address of the one you want. See [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). |
 | `AccessDenied` | The container isn't running as root, or AppArmor is blocking it. See [Host setup](#host-setup-raspberry-pi--debian) and the `security_opt` row in [Docker changes](#docker-changes). |
 | `not found while scanning` / `scan` finds nothing | The kettle is out of range or unpowered, or the VeSync app is connected to it. **Raspberry Pi 4 in a metal case (e.g. Argon ONE):** the onboard antenna is heavily shielded and may not hear the kettle even at 3 m. Use a USB Bluetooth adapter on a short extension cable (see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter)). |
+| `Lost connection to the kettle; reconnecting`, then `Reconnected to the kettle after 4.1 s` | Normal on a weak link. See [Occasional disconnects](#occasional-disconnects). |
+| `Kettle not reachable for 5 min …` (repeats at 15 min, 30 min, then hourly) | The kettle has been unreachable that long and the plugin is still retrying. Check that it's powered, in range and the VeSync app is closed. |
 | `le-connection-abort-by-local` / connect timeouts | Usually radio coexistence on the Pi 4 (see Host setup), or discovery running during connect. Retry. |
 | `kettle rejected the registration key` | Wrong key. Re-capture it (Option A) or pair (Option B). |
 | `not in pairing mode` | Hold the MyBrew button until the kettle signals pairing mode, then retry. |
 | Temperature reads 1–3 °F below the setpoint while holding | Normal kettle behaviour. |
 | `usocket@0.3.0 install` … `gyp ERR! Completion callback never invoked!` in an npm install log (for example when installing or updating any plugin) | Harmless. `usocket` is an optional native dependency of `dbus-next` (via `node-ble`), and its bundled node-gyp 7 can't build on Node 24. npm skips it and the install succeeds. Without it, `dbus-next` connects to the system bus with Node's own `net` socket, which is all this plugin needs. The warning comes back on every npm install in `/homebridge`, and a plugin can't silence it from its own `package.json`. |
+
+### Occasional disconnects
+
+The kettle's Bluetooth radio is weak, and a kettle 3 m (10 ft) away through furniture or a wall is near the edge of what BLE can do. Expect the link to drop now and then: the kettle goes silent for more than 6 s and BlueZ ends the connection (`Connection Timeout`, HCI reason 0x08). The plugin reconnects by itself, usually within about 5 s, and logs:
+
+```
+Lost connection to the kettle; reconnecting
+Reconnected to the kettle after 4.1 s (1 attempt, last connect 1.2 s)
+```
+
+HomeKit isn't affected by a short drop: it keeps showing the last status, and a command you send during a drop runs as soon as the link is back. Only when the kettle has been unreachable for more than 15 s does HomeKit show "No Response" for taps. If drops are frequent or long, use a USB Bluetooth adapter on an extension cable (see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter)) and keep the Pi on Ethernet or 5 GHz Wi-Fi.
 
 ## Protocol notes
 

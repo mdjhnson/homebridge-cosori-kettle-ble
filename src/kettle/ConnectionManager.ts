@@ -30,6 +30,11 @@ export interface ConnectionManagerOptions {
   backoff?: BackoffOptions;
   /** Minimum time between connection attempts, even when commands wake the loop (default 2 s). */
   minAttemptIntervalMs?: number;
+  /**
+   * Log a warning when the link has been down this long, even between failed attempts that would
+   * otherwise only log at debug level (default 1, 5, 15 and 30 min, then every hour).
+   */
+  downWarningsMs?: number[];
   log: Logger;
 }
 
@@ -46,6 +51,21 @@ export class KettleUnavailableError extends Error {
   }
 }
 
+const DEFAULT_DOWN_WARNINGS_MS = [60_000, 300_000, 900_000, 1_800_000];
+
+/** "4.1 s", "12 min", "2 h 5 min". */
+export function formatDuration(ms: number): string {
+  if (ms < 60_000) {
+    return `${(Math.floor(Math.max(0, ms) / 100) / 10).toFixed(1)} s`;
+  }
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const rest = minutes % 60;
+  return rest ? `${Math.floor(minutes / 60)} h ${rest} min` : `${minutes / 60} h`;
+}
+
 export class ConnectionManager extends EventEmitter<Events> {
   private stopped = true;
   private loopPromise?: Promise<void>;
@@ -60,6 +80,9 @@ export class ConnectionManager extends EventEmitter<Events> {
   private keyRejected = false;
   private consecutiveConnectFailures = 0;
   private everConnected = false;
+  /** Set when an established link drops, cleared by the next successful connect. */
+  private reconnecting = false;
+  private downWarningsGiven = 0;
   /** When the link was last lost (or the manager started without a link); 0 while connected. */
   private downSince = Date.now();
   private readonly waiters = new Set<{ resolve: () => void; reject: (err: Error) => void }>();
@@ -259,6 +282,7 @@ export class ConnectionManager extends EventEmitter<Events> {
         continue;
       }
       if (outcome === 'lost') {
+        this.reconnecting = true;
         this.log.warn('Lost connection to the kettle; reconnecting');
       }
       const wait = this.keyRejected ? 300_000 : this.backoff.next();
@@ -295,12 +319,20 @@ export class ConnectionManager extends EventEmitter<Events> {
     }
     this.keyRejected = false;
     this.backoff.reset();
-    if (this.consecutiveConnectFailures > 0 || !this.everConnected) {
-      this.log.info(`Connected to the kettle (${((Date.now() - started) / 1000).toFixed(1)} s)`);
+    const took = ((Date.now() - started) / 1000).toFixed(1);
+    if (this.reconnecting) {
+      // A drop followed by a quick reconnect should read as recovered, not as a dead link.
+      const attempts = this.consecutiveConnectFailures + 1;
+      this.log.info(`Reconnected to the kettle after ${formatDuration(Date.now() - this.downSince)} `
+        + `(${attempts} attempt${attempts === 1 ? '' : 's'}, last connect ${took} s)`);
+    } else if (this.consecutiveConnectFailures > 0 || !this.everConnected) {
+      this.log.info(`Connected to the kettle (${took} s)`);
     } else {
-      this.log.debug(`Connected (${((Date.now() - started) / 1000).toFixed(1)} s)`);
+      this.log.debug(`Connected (${took} s)`);
     }
     this.everConnected = true;
+    this.reconnecting = false;
+    this.downWarningsGiven = 0;
     this.consecutiveConnectFailures = 0;
     this.lastActivityAt = Date.now();
     this.nextPollAt = 0;
@@ -345,11 +377,27 @@ export class ConnectionManager extends EventEmitter<Events> {
       return; // already logged
     }
     const n = this.consecutiveConnectFailures;
-    const message = `Kettle not reachable (${errorMessage(err)}). Is it in range, and is the VeSync app closed? Will keep retrying.`;
-    if (n === 1 || n === 5 || n === 20 || n % 50 === 0) {
+    const downFor = Date.now() - this.downSince;
+    const since = this.everConnected ? ` for ${formatDuration(downFor)}` : '';
+    const message = `Kettle not reachable${since} (${errorMessage(err)}). Is it in range, and is the VeSync app closed? Will keep retrying.`;
+    // Warn on the first failure, then by elapsed time, so a long outage never goes quiet.
+    let warn = n === 1;
+    while (downFor >= this.downWarningThreshold(this.downWarningsGiven)) {
+      this.downWarningsGiven++;
+      warn = true;
+    }
+    if (warn) {
       this.log.warn(n === 1 ? message : `${message} [${n} attempts]`);
     } else {
       this.log.debug(message);
     }
+  }
+
+  private downWarningThreshold(index: number): number {
+    const thresholds = this.options.downWarningsMs ?? DEFAULT_DOWN_WARNINGS_MS;
+    if (index < thresholds.length) {
+      return thresholds[index]!;
+    }
+    return (thresholds.at(-1) ?? 0) + (index - thresholds.length + 1) * 3_600_000;
   }
 }

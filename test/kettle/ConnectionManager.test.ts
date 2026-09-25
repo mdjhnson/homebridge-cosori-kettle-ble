@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ConnectionManager, KettleUnavailableError, type ConnectionManagerOptions } from '../../src/kettle/ConnectionManager.js';
+import { ConnectionManager, type ConnectionManagerOptions, formatDuration, KettleUnavailableError } from '../../src/kettle/ConnectionManager.js';
 import { KettleClient } from '../../src/kettle/KettleClient.js';
 import { buildFrame, Cmd, fromHex, parseFrame, parseKey } from '../../src/protocol/index.js';
-import { silentLogger } from '../../src/util/log.js';
+import { type Logger, silentLogger } from '../../src/util/log.js';
 import { EXTENDED_FRAMES } from '../fixtures/captures.js';
 import { FakeTransport, type Responder } from './FakeTransport.js';
 
@@ -56,6 +56,14 @@ const until = async (cond: () => boolean, ms = 1000) => {
     await new Promise((r) => setTimeout(r, 5));
   }
 };
+
+function captureLog(): Logger & { lines: { level: string; message: string }[] } {
+  const lines: { level: string; message: string }[] = [];
+  const at = (level: string) => (message: string) => {
+    lines.push({ level, message });
+  };
+  return { lines, debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
+}
 
 afterEach(async () => {
   await Promise.all(managers.splice(0).map((m) => m.stop()));
@@ -190,5 +198,62 @@ describe('ConnectionManager (onDemand)', () => {
     manager.start();
     await until(() => fake.connectCount === 1 && !fake.connected, 1000);
     expect(manager.isFresh(Date.now() + 3_600_000)).toBe(true);
+  });
+});
+
+describe('ConnectionManager logging', () => {
+  const visible = (log: ReturnType<typeof captureLog>) => log.lines.filter((l) => l.level !== 'debug');
+
+  it('logs the first connect as "Connected", not as a reconnect', async () => {
+    const log = captureLog();
+    const { manager } = setup(kettle(), { log });
+    manager.start();
+    await until(() => manager.connected);
+    expect(visible(log)).toEqual([{ level: 'info', message: expect.stringMatching(/^Connected to the kettle \(\d+\.\d s\)$/) }]);
+  });
+
+  it('logs a drop and the quick recovery at info level, so it reads as recovered', async () => {
+    const log = captureLog();
+    const { fake, manager } = setup(kettle(), { log });
+    manager.start();
+    await until(() => manager.connected);
+    log.lines.length = 0;
+    fake.drop();
+    await until(() => fake.connectCount === 2 && manager.connected);
+    expect(visible(log)).toEqual([
+      { level: 'warn', message: 'Lost connection to the kettle; reconnecting' },
+      { level: 'info', message: expect.stringMatching(/^Reconnected to the kettle after \d+\.\d s \(1 attempt, last connect \d+\.\d s\)$/) },
+    ]);
+  });
+
+  it('warns with the elapsed time while the link stays down, then reports the attempts on recovery', async () => {
+    const log = captureLog();
+    const { fake, manager } = setup(kettle(), { log, downWarningsMs: [40, 80] });
+    manager.start();
+    await until(() => manager.connected);
+    log.lines.length = 0;
+    fake.connectError = new Error('not found while scanning');
+    fake.drop();
+    await until(() => log.lines.filter((l) => l.level === 'warn').length >= 4, 2000);
+    const warnings = log.lines.filter((l) => l.level === 'warn').map((l) => l.message);
+    expect(warnings[0]).toBe('Lost connection to the kettle; reconnecting');
+    expect(warnings[1]).toMatch(/^Kettle not reachable for \d+\.\d s \(not found while scanning\)/);
+    expect(warnings.slice(2).every((w) => /not reachable for .* \[\d+ attempts\]$/.test(w))).toBe(true);
+    // Failures between the thresholds stay at debug level.
+    expect(log.lines.some((l) => l.level === 'debug' && /not reachable/.test(l.message))).toBe(true);
+    fake.connectError = undefined;
+    await until(() => manager.connected, 2000);
+    expect(log.lines.at(-1)).toEqual({ level: 'info', message: expect.stringMatching(/^Reconnected to the kettle after .* \(\d+ attempts, /) });
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats seconds, minutes and hours', () => {
+    expect(formatDuration(4_140)).toBe('4.1 s');
+    expect(formatDuration(59_999)).toBe('59.9 s');
+    expect(formatDuration(60_000)).toBe('1 min');
+    expect(formatDuration(12 * 60_000 + 30_000)).toBe('12 min');
+    expect(formatDuration(3_600_000)).toBe('1 h');
+    expect(formatDuration(2 * 3_600_000 + 5 * 60_000)).toBe('2 h 5 min');
   });
 });
