@@ -13,17 +13,17 @@ _Last updated: 2026-09-24 (evening, US Central)._
 
 ## Deployed on the Pi
 
-- Plugin v0.1.0 from commit `bc55833` (includes `f8ff1ac`: restore Home-app-overwritten tile names; refuse commands when unreachable for more than 15 s), installed into the container from a tarball on 2026-09-24. Only the Kettle child bridge was restarted.
+- Plugin v0.1.0 from commit `f3b36ef` (adapter selection by MAC, `cosori-probe adapters`; includes `f8ff1ac`: restore Home-app-overwritten tile names, refuse commands when unreachable for more than 15 s), installed into the container from a tarball on 2026-09-24, followed by a Pi reboot to disable the onboard radio.
 - To deploy an update: `npm pack` → copy into the container → `npm install --prefix /homebridge <tgz>` → **restart only the Kettle child bridge**.
-- Config: a `CosoriKettleBLE` platform as a child bridge, persistent mode, every switch enabled (the user asked for all of them), `"adapter": "hci1"` (the USB adapter; to be switched to its MAC once the MAC-selection build is deployed). Pi-specific details are in `docs/local/` (gitignored).
-- Radio: a TP-Link UB500 (RTL8761BU) USB Bluetooth adapter since 2026-09-24. The onboard CYW43455 is still enabled; plan is `dtoverlay=disable-bt`.
+- Config: a `CosoriKettleBLE` platform as a child bridge, persistent mode, every switch enabled (the user asked for all of them), `"adapter"` set to the USB adapter's MAC. Pi-specific details are in `docs/local/` (gitignored).
+- Radio: a TP-Link UB500 (RTL8761BU) USB Bluetooth adapter since 2026-09-24. The onboard CYW43455 is disabled (`dtoverlay=disable-bt`), so the USB adapter is now `hci0`. After the reboot the plugin logged `Using Bluetooth adapter hci0 (…)` and connected in 5.0 s.
 
 ## Open issues (priority order)
 
 1. **The link drops once heating starts and doesn't recover. Likely fixed by a USB Bluetooth adapter (2026-09-24).** On the onboard radio the link dropped twice during heating (details below) and the Pi then couldn't hear the kettle at all, even while a Mac next to the Pi heard it advertising at about -63 dBm and a power cycle of the kettle didn't help. That put the fault on the Pi's receive side (aluminium Argon ONE case, USB 3 SSD nearby). After switching the plugin to a TP-Link UB500 (RTL8761BU) on a USB 2.0 port:
    - The first connect took **4.4 s** (10–40 s on the onboard radio), right after the plugin had failed for hours on the onboard radio.
    - **A full cycle with no drop:** Green Tea started from the kettle's button at about 20:10, 180 °F and "heating complete" at 20:15, 30-min hold, "keep-warm complete" at 20:45, back to idle. A 2-s link watcher saw no disconnect, hci1 had 0 errors over about 3,000 ACL packets, every 5-s poll was answered, and a Mac scanner never saw the kettle advertising (it only advertises when disconnected).
-   - **Caveats:** one clean cycle, started from the kettle rather than HomeKit. Hypothesis 2 (the kettle drops the link while heating) isn't strictly ruled out, and the plugin's reconnect after a real drop still hasn't been seen working. btmon keeps capturing hci1 in the container (`/tmp/kettle-hci1.btsnoop`) so a future drop records its HCI reason. Keep watching over a few days of normal use.
+   - **Caveats:** one clean cycle, started from the kettle rather than HomeKit. Hypothesis 2 (the kettle drops the link while heating) isn't strictly ruled out, and the plugin's reconnect after a real drop still hasn't been seen working. btmon keeps capturing the USB adapter in the container (`/tmp/kettle-hci.btsnoop`) so a future drop records its HCI reason. Keep watching over a few days of normal use.
 
    History (onboard radio): At 21:36:39 local, Boil was sent via HomeKit. At 21:36:52 the link was lost. After that, every reconnect failed with "BLE connect timed out" or "not found while scanning", and a host `bluetoothctl` LE scan heard 22 devices but not the kettle. That looked like the kettle wasn't advertising, but later tests (22:06–22:48) showed a Mac next to the Pi hearing it advertise strongly while the Pi heard nothing. The user says VeSync was *not* reopened, so an app takeover is less likely (but iOS background reconnects are still possible). Hypotheses to test, in order:
    1. Something else holds the connection: the iPhone's VeSync (background), or another phone or tablet. Test: turn Bluetooth off on the phones, then scan. **Done 2026-09-23: no change, so very unlikely.**
@@ -39,9 +39,8 @@ _Last updated: 2026-09-24 (evening, US Central)._
 
 ## Next steps
 
-1. Deploy the adapter-by-MAC build, set `adapter` to the USB adapter's MAC, then disable the onboard radio (`dtoverlay=disable-bt`, needs a reboot).
-2. Watch for drops over a few days of normal use (btmon on hci1 records the reason code). Try one heat started from HomeKit.
-3. Confirm the tile names are restored now that `f8ff1ac` is deployed.
-4. Finish the Checkpoint C list: heat and off via the dial, a preset, Keep Warm holding after the heat finishes, Delay Start on and off, and On Base.
-5. Decide the tile layout: FUTURE-WORK §2 (preset selector, default switches) and §2b (user-defined temperature switches in the config, prefilled with the kettle presets).
-6. Replace `node-ble` (FUTURE-WORK §3b, agreed).
+1. Watch for drops over a few days of normal use (btmon on the USB adapter records the reason code). Try one heat started from HomeKit.
+2. Confirm the tile names are restored now that `f8ff1ac` is deployed.
+3. Finish the Checkpoint C list: heat and off via the dial, a preset, Keep Warm holding after the heat finishes, Delay Start on and off, and On Base.
+4. Decide the tile layout: FUTURE-WORK §2 (preset selector, default switches) and §2b (user-defined temperature switches in the config, prefilled with the kettle presets).
+5. Replace `node-ble` (FUTURE-WORK §3b, agreed).
