@@ -13,7 +13,7 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 
 **Open question to test first:** does registering a new key unpair the VeSync app? This is unknown. Test it on the maintainer's kettle with consent: `cosori-probe pair`, then check whether the app still connects. The worst case is re-adding the kettle in VeSync. Document the result in the README.
 
-## 2. Tile layout plan (proposed 2026-09-24, awaiting the user's review)
+## 2. Tile layout plan (decided 2026-09-24, not built yet)
 
 Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and user-defined temperature switches (was §2b). Nothing is built until the decisions at the end are made.
 
@@ -31,7 +31,7 @@ Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and
 
 The dial already covers any temperature, so switches are shortcuts: one tap or one Siri phrase ("turn on Green Tea"), and usable in scenes and automations.
 
-**Also worth trying first (no code):** the Home app can show all of an accessory's services as **one tile** (open the accessory → settings → "Show as Single Tile"; on some iOS versions it's grouped by default and "Show as Separate Tiles" splits it). That alone may fix the "nine tiles" problem while keeping every control one tap away inside the tile. To check on the maintainer's phone.
+**Single tile doesn't solve it:** the maintainer's Home app already shows the kettle as one tile (checked 2026-09-24). The clutter is the seven switches inside the kettle's detail view, so fewer, user-chosen switches is the fix.
 
 ### Temperature switches (replaces `accessories.presets`)
 
@@ -46,7 +46,7 @@ Config, rendered as an add/remove list in the Homebridge UI:
 ]
 ```
 
-- **Fields:** `name` (required; letters, digits and spaces only, because HAP rejects other names), `temperature` in `temperatureUnit` (F: 104–212, C: 40–100), optional `keepWarmMinutes` (0 = no hold; default = the Keep Warm switch and global setting).
+- **Fields:** `name` (required; letters, digits and spaces only, because HAP rejects other names) and `temperature` in `temperatureUnit` (F: 104–212, C: 40–100). Keep-warm stays global: the one Keep Warm switch and `keepWarmMinutes` apply to every switch.
 - **Default:** the four kettle presets above, so a new install gets sensible shortcuts. A user who wants a minimal Home app deletes them.
 - **On:** heats to that temperature. If it matches a kettle preset (within 1 °F, so Celsius values like 91 °C → Oolong work), the plugin sends that preset (F0). Otherwise it stores the temperature as MyBrew and heats in MyBrew mode (F3, then F0 mode 5), which is what the thermostat dial already does for non-preset temperatures.
 - **Shows On** while the kettle is heating or holding at that item's temperature (setpoint within 1 °F). **Off** stops the kettle. Two items with the same temperature would both show On, so validation warns about duplicates.
@@ -67,23 +67,25 @@ Config, rendered as an add/remove list in the Homebridge UI:
 ### Migration
 
 - If `switches` is absent and `accessories.presets` is present, build the list from the enabled presets (same names, the kettle's preset temperatures) and log once: "accessories.presets is deprecated; add a Temperature switches list in the plugin settings". Old configs keep working unchanged.
-- **MyBrew** has no fixed temperature (it uses whatever is stored on the kettle), so it doesn't fit a name + temperature item. Options below (decision 3).
+- **MyBrew** has no fixed temperature (it uses whatever is stored on the kettle), so it doesn't fit a name + temperature item. **Dropped:** a config with `myBrew: true` logs once that the MyBrew switch was removed and how to add a custom temperature instead. Its tile (`preset-myBrew`) is removed.
 - Drop `accessories.presets` from the schema; keep reading it for at least one release.
 
 ### Maintainer's setup after the change (suggested)
 
 Thermostat, On Base, Keep Warm, and whichever temperature switches you actually tap (maybe just Boil and Green Tea). Delay Start off unless you use it. Or keep everything and use "Show as Single Tile".
 
-### Decisions for the user
+### Decisions (made by the user 2026-09-24)
 
-1. **Default switches for new installs:** the four kettle presets (as §2b asked), or none (thermostat only, users add their own)?
-2. **Try "Show as Single Tile" first?** If one grouped tile solves the confusion for you, the switch list is still worth building for custom temperatures, but it's less urgent than the BLE library work.
-3. **MyBrew:** (a) drop it, and migrate `myBrew: true` to a warning saying to add a custom temperature instead; (b) allow `"temperature": "mybrew"` for an item that uses the kettle's stored temperature; (c) keep a separate MyBrew checkbox.
-4. **Per-item keep-warm:** include `keepWarmMinutes` per item now, or later?
+1. **Default switches for new installs:** the four kettle presets (Green Tea, Oolong, Coffee, Boil).
+2. **Single tile:** already in effect on the maintainer's phone; it doesn't reduce the switches inside the tile.
+3. **MyBrew:** dropped (migrates to a one-time log note).
+4. **Per-switch keep-warm:** no. One Keep Warm switch and one global time. Not planned.
+
+**Related, suggested (not decided): Delay Start.** A toggle with a fixed delay can't express "at 6:45". Siri timed requests ("at 11:15 pm turn on Green Tea") and Home app automations do that better. The kettle-side timer's only advantage is that it still fires if the Pi, Homebridge or the BLE link is down at that moment, while a HomeKit-scheduled command is refused after 15 s of outage. Suggestion: keep it as an opt-in (default off, as today), document the trade-off in the README, and turn it off in the maintainer's config.
 
 ### Tests
 
-Schema defaults; validation (names, range, duplicates, Celsius); migration from `accessories.presets`; subtype stability across reorder and temperature change; tile removal; preset vs MyBrew command selection (including Celsius rounding); switch On/Off from status.
+Schema defaults; validation (names, range, duplicates, Celsius); migration from `accessories.presets` (including the MyBrew note); subtype stability across reorder and temperature change; tile removal; preset vs MyBrew command selection (including Celsius rounding); switch On/Off from status.
 
 ## 3. Radio robustness
 
