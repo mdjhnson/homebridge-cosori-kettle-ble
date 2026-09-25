@@ -97,17 +97,31 @@
             "title": "Delay Start switch (uses the kettle's own timer)",
             "type": "boolean",
             "default": false,
-            "description": "Tip: for schedules you can also use a Home app automation that turns the kettle to Heat at a time of day."
-          },
-          "presets": {
-            "title": "Preset switches",
-            "type": "object",
-            "properties": {
-              "boil": { "title": "Boil (212°F)", "type": "boolean", "default": true },
-              "greenTea": { "title": "Green Tea (180°F)", "type": "boolean", "default": false },
-              "oolong": { "title": "Oolong (195°F)", "type": "boolean", "default": false },
-              "coffee": { "title": "Coffee (205°F)", "type": "boolean", "default": false },
-              "myBrew": { "title": "MyBrew (kettle's stored temperature)", "type": "boolean", "default": false }
+            "description": "Uses the kettle's own timer, so it still fires if Homebridge or Bluetooth is down at that moment. For an exact time of day, a Home app automation or Siri (\"at 6:45 turn on Green Tea\") is more flexible."
+          }
+        }
+      },
+      "switches": {
+        "title": "Temperature switches",
+        "description": "Each item is a switch in the Home app that heats the kettle to its temperature. Leave the list empty to get the kettle's four presets.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "required": true,
+              "pattern": "^\\s*[^\\s!-/:-@\\[-`{-~][^!-/:-@\\[-`{-~]*[^\\s!-/:-@\\[-`{-~]\\s*$",
+              "description": "Letters, digits and spaces only, at least two characters."
+            },
+            "temperature": {
+              "title": "Temperature",
+              "type": "number",
+              "required": true,
+              "minimum": 40,
+              "maximum": 212,
+              "description": "°F (104–212) or °C (40–100). Values from 101 to 103 are neither and are skipped."
             }
           }
         }
@@ -161,12 +175,25 @@
         "accessories.onBaseSensor",
         "accessories.keepWarmSwitch",
         "accessories.delayStartSwitch",
-        "delayStartMinutes",
-        "accessories.presets.boil",
-        "accessories.presets.greenTea",
-        "accessories.presets.oolong",
-        "accessories.presets.coffee",
-        "accessories.presets.myBrew"
+        "delayStartMinutes"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Temperature switches",
+      "expandable": true,
+      "items": [
+        {
+          "key": "switches",
+          "type": "array",
+          "orderable": true,
+          "buttonText": "Add switch",
+          "items": ["switches[].name", "switches[].temperature"]
+        },
+        {
+          "type": "help",
+          "helpvalue": "<p><strong>Kettle presets:</strong> Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. Any other temperature from 104–212 °F (40–100 °C) also works; the kettle stores it as its MyBrew temperature.</p><p>With the list empty, a new install gets the four presets and an older install keeps the preset tiles it has. Renaming a switch here (beyond capitals) creates a new tile in the Home app. To keep its room and automations, rename it in the Home app instead.</p>"
+        }
       ]
     },
     {

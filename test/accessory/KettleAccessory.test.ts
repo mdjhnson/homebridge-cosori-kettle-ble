@@ -54,7 +54,7 @@ async function setup(opts: { status?: Buffer; overrides?: Record<string, unknown
   });
   managers.push(manager);
   const accessory = newAccessory();
-  new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, manager);
+  new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, manager, true);
   if (opts.start !== false) {
     manager.start();
     await until(() => manager.status !== undefined);
@@ -79,16 +79,17 @@ describe('KettleAccessory services', () => {
     expect(accessory.getService(S.Thermostat)).toBeDefined();
     expect(accessory.getServiceById(S.OccupancySensor, 'on-base')).toBeDefined();
     expect(accessory.getServiceById(S.Switch, 'keep-warm')).toBeDefined();
-    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBeDefined();
-    expect(accessory.getServiceById(S.Switch, 'preset-greenTea')).toBeUndefined();
+    for (const subtype of ['preset-greenTea', 'preset-oolong', 'preset-coffee', 'preset-boil']) {
+      expect(accessory.getServiceById(S.Switch, subtype)).toBeDefined();
+    }
     expect(accessory.getServiceById(S.Switch, 'delay-start')).toBeUndefined();
-    expect((accessory as unknown as { services: unknown[] }).services).toHaveLength(5); // info, thermostat, on-base, boil, keep-warm
+    expect((accessory as unknown as { services: unknown[] }).services).toHaveLength(8); // info, thermostat, on-base, 4 switches, keep-warm
     expect(accessory.getService(S.AccessoryInformation)!.getCharacteristic(C.SerialNumber).value).toBe('FC:58:FA:0F:C3:26');
   });
 
   it('honours accessory toggles', async () => {
     const { accessory } = await setup({
-      overrides: { accessories: { onBaseSensor: false, keepWarmSwitch: false, delayStartSwitch: true, presets: { boil: false, coffee: true } } },
+      overrides: { accessories: { onBaseSensor: false, keepWarmSwitch: false, delayStartSwitch: true }, switches: [{ name: 'Coffee', temperature: 205 }] },
     });
     expect(accessory.getServiceById(S.OccupancySensor, 'on-base')).toBeUndefined();
     expect(accessory.getServiceById(S.Switch, 'keep-warm')).toBeUndefined();
@@ -106,10 +107,9 @@ describe('KettleAccessory services', () => {
     const manager = new ConnectionManager(new KettleClient(fake), {
       key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
     });
-    new KettleAccessory(fakeApi(), silentLogger, config({ accessories: { delayStartSwitch: true, presets: { greenTea: true, oolong: true, coffee: true,
-      myBrew: true } } }), accessory, manager);
+    new KettleAccessory(fakeApi(), silentLogger, config({ accessories: { delayStartSwitch: true } }), accessory, manager, true);
     const names = (accessory as unknown as { services: Array<{ displayName: string }> }).services.map((s) => s.displayName).filter(Boolean);
-    expect(names).toEqual(['Kettle', 'On Base', 'Green Tea', 'Oolong', 'Coffee', 'Boil', 'MyBrew', 'Keep Warm', 'Delay Start']);
+    expect(names).toEqual(['Kettle', 'On Base', 'Green Tea', 'Oolong', 'Coffee', 'Boil', 'Keep Warm', 'Delay Start']);
     for (const name of names) {
       expect(name).toMatch(/^[\p{L}\p{N}][\p{L}\p{N} ',.-]*[\p{L}\p{N}]$/u);
     }
@@ -121,15 +121,15 @@ describe('KettleAccessory services', () => {
     const first = new ConnectionManager(new KettleClient(new FakeTransport()), {
       key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
     });
-    const cfg = config({ accessories: { presets: { coffee: true } } });
-    new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, first);
+    const cfg = config();
+    new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, first, true);
     // Simulate the Home app renaming during pairing, and the user renaming one tile.
     accessory.getServiceById(S.Switch, 'preset-boil')!.updateCharacteristic(C.ConfiguredName, 'Switch');
     accessory.getServiceById(S.Switch, 'keep-warm')!.updateCharacteristic(C.ConfiguredName, 'Switch 2');
     accessory.getServiceById(S.Switch, 'preset-coffee')!.updateCharacteristic(C.ConfiguredName, 'Morning Coffee');
     accessory.getServiceById(S.OccupancySensor, 'on-base')!.updateCharacteristic(C.ConfiguredName, 'Occupancy Sensor');
     // Restart: a new accessory handler on the same (cached) accessory.
-    new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, first);
+    new KettleAccessory(fakeApi(), silentLogger, cfg, accessory, first, false);
     const name = (svc: { getCharacteristic: (c: typeof C.ConfiguredName) => { value: unknown } } | undefined) =>
       svc!.getCharacteristic(C.ConfiguredName).value;
     expect(name(accessory.getServiceById(S.Switch, 'preset-boil'))).toBe('Boil');
@@ -137,6 +137,78 @@ describe('KettleAccessory services', () => {
     expect(name(accessory.getServiceById(S.Switch, 'preset-coffee'))).toBe('Morning Coffee');
     expect(name(accessory.getServiceById(S.OccupancySensor, 'on-base'))).toBe('On Base');
     expect(name(accessory.getService(S.Thermostat))).toBe('Kettle');
+  });
+
+  it('removes tiles for switches that left the config, and keeps the others (same service, same tile)', async () => {
+    const accessory = newAccessory();
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    // Before: the old preset checkboxes, MyBrew included.
+    new KettleAccessory(fakeApi(), silentLogger, config({ accessories: { presets: { boil: true, oolong: true } } }), accessory, manager, true);
+    accessory.addService(S.Switch, 'MyBrew', 'preset-myBrew');
+    const boil = accessory.getServiceById(S.Switch, 'preset-boil');
+    // After: a list with Boil (moved to the end), a new item, and no Oolong or MyBrew.
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Pour Over', temperature: 200 }, { name: 'Boil', temperature: 212 }] }),
+      accessory, manager, false);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBe(boil);
+    expect(accessory.getServiceById(S.Switch, 'preset-pourOver')).toBeDefined();
+    expect(accessory.getServiceById(S.Switch, 'preset-oolong')).toBeUndefined();
+    expect(accessory.getServiceById(S.Switch, 'preset-myBrew')).toBeUndefined();
+    expect(accessory.getServiceById(S.Switch, 'keep-warm')).toBeDefined();
+  });
+
+  it('keeps the tile of a switch entry that became invalid, and removes it once the list is valid', async () => {
+    const accessory = newAccessory();
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Boil', temperature: 212 }, { name: 'Coffee', temperature: 205 }] }),
+      accessory, manager, true);
+    const boil = accessory.getServiceById(S.Switch, 'preset-boil');
+    // A typo in the Boil entry: its tile stays (room, automations) but does nothing.
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Boil!', temperature: 212 }, { name: 'Coffee', temperature: 205 }] }),
+      accessory, manager, false);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBe(boil);
+    expect(await boil!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
+    // Turning it on fails in HomeKit rather than reporting a heat that never happens.
+    await expect(boil!.getCharacteristic(C.On).handleSetRequest(true)).rejects.toBe(hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+    // Fixed by removing the entry: now the tile goes.
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Coffee', temperature: 205 }] }), accessory, manager, false);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBeUndefined();
+  });
+
+  it('with no list, an install from before the list keeps its preset tiles instead of gaining the four defaults', () => {
+    const accessory = newAccessory();
+    // Created by an older version and restored from the cache. The context doesn't matter (not even a missing mac).
+    accessory.addService(S.Switch, 'Boil', 'preset-boil');
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config(), accessory, manager, false);
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')).toBeDefined();
+    for (const subtype of ['preset-greenTea', 'preset-oolong', 'preset-coffee']) {
+      expect(accessory.getServiceById(S.Switch, subtype)).toBeUndefined();
+    }
+    // A new install gets the four presets, and keeps them on restart.
+    const fresh = newAccessory('Other');
+    new KettleAccessory(fakeApi(), silentLogger, config(), fresh, manager, true);
+    new KettleAccessory(fakeApi(), silentLogger, config(), fresh, manager, false);
+    expect(fresh.services.filter((svc) => svc.subtype?.startsWith('preset-'))).toHaveLength(4);
+  });
+
+  it('follows a rename in the config that keeps the tile, unless the user renamed it in the Home app', () => {
+    const accessory = newAccessory();
+    const manager = new ConnectionManager(new KettleClient(new FakeTransport()), {
+      key: parseKey(KEY), mode: 'persistent', pollIntervalMs: 1000, onDemandPollIntervalMs: 1000, idleDisconnectMs: 1000, log: silentLogger,
+    });
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Pour over', temperature: 200 }, { name: 'Boil', temperature: 212 }] }),
+      accessory, manager, true);
+    accessory.getServiceById(S.Switch, 'preset-boil')!.updateCharacteristic(C.ConfiguredName, 'Kettle On');
+    new KettleAccessory(fakeApi(), silentLogger, config({ switches: [{ name: 'Pour Over', temperature: 200 }, { name: 'BOIL', temperature: 212 }] }),
+      accessory, manager, false);
+    expect(accessory.getServiceById(S.Switch, 'preset-pourOver')!.getCharacteristic(C.ConfiguredName).value).toBe('Pour Over');
+    expect(accessory.getServiceById(S.Switch, 'preset-boil')!.getCharacteristic(C.ConfiguredName).value).toBe('Kettle On');
   });
 
   it('thermostat range is 40–100 °C with 0.5 °C steps and OFF/HEAT only', async () => {
@@ -162,6 +234,20 @@ describe('KettleAccessory reads', () => {
     const { thermostat, sub } = await setup({ status: HEATING });
     expect(await thermostat().getCharacteristic(C.CurrentHeatingCoolingState).handleGetRequest()).toBe(C.CurrentHeatingCoolingState.HEAT);
     expect(await sub(S.Switch, 'preset-boil')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+    expect(await sub(S.Switch, 'preset-coffee')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
+  });
+
+  it('shows a custom switch On while the kettle heats in MyBrew mode to its temperature', async () => {
+    const myBrew = Buffer.from(HEATING);
+    myBrew[5] = Mode.MY_BREW;
+    myBrew[6] = 180; // not captured in this mode: the MyBrew temperature (byte 8) decides, not the setpoint byte
+    myBrew[8] = 200;
+    const { sub, thermostat } = await setup({
+      status: myBrew, overrides: { switches: [{ name: 'Pour Over', temperature: 200 }, { name: 'Green Tea', temperature: 180 }] },
+    });
+    expect(await sub(S.Switch, 'preset-pourOver')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+    expect(await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
+    expect(await thermostat().getCharacteristic(C.TargetTemperature).handleGetRequest()).toBe(93.5); // 200 °F
   });
 
   it('answers No Response before any status arrives', async () => {
@@ -257,13 +343,30 @@ describe('KettleAccessory commands', () => {
     expect(lastSent(Cmd.SET_HOLD)!.payload.readUInt16LE(6)).toBe(1800);
   });
 
-  it('MyBrew switch uses the kettle\'s stored MyBrew temperature', async () => {
-    const { sub, sentCmds, lastSent } = await setup({ overrides: { accessories: { presets: { myBrew: true } } } });
-    await sub(S.Switch, 'preset-myBrew')!.getCharacteristic(C.On).handleSetRequest(true);
+  it('a custom temperature switch stores the temperature as MyBrew, then starts MyBrew', async () => {
+    const { sub, sentCmds, lastSent } = await setup({ overrides: { switches: [{ name: 'Pour Over', temperature: 200 }] } });
+    await sub(S.Switch, 'preset-pourOver')!.getCharacteristic(C.On).handleSetRequest(true);
     await until(() => lastSent(Cmd.SET_MODE) !== undefined);
     expect(sentCmds()).toEqual([Cmd.SET_MY_TEMP, Cmd.SET_MODE]);
-    expect(lastSent(Cmd.SET_MY_TEMP)!.payload[4]).toBe(140);
+    expect(lastSent(Cmd.SET_MY_TEMP)!.payload[4]).toBe(200);
     expect(lastSent(Cmd.SET_MODE)!.payload[4]).toBe(Mode.MY_BREW);
+  });
+
+  it('a Celsius switch near a preset uses the kettle preset (91 °C → Oolong)', async () => {
+    const { sub, sentCmds, lastSent } = await setup({ overrides: { temperatureUnit: 'C', switches: [{ name: 'Oolong', temperature: 91 }] } });
+    await sub(S.Switch, 'preset-oolong')!.getCharacteristic(C.On).handleSetRequest(true);
+    await until(() => lastSent(Cmd.SET_MODE) !== undefined);
+    expect(sentCmds()).toEqual([Cmd.SET_MODE]);
+    expect(lastSent(Cmd.SET_MODE)!.payload[4]).toBe(Mode.OOLONG);
+  });
+
+  it('switch Off stops the kettle only when it is heating to that switch\'s temperature', async () => {
+    const { sub, sentCmds, lastSent } = await setup({ status: HEATING });
+    await sub(S.Switch, 'preset-coffee')!.getCharacteristic(C.On).handleSetRequest(false);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sentCmds()).toEqual([]);
+    await sub(S.Switch, 'preset-boil')!.getCharacteristic(C.On).handleSetRequest(false);
+    await until(() => lastSent(Cmd.STOP) !== undefined);
   });
 
   it('Delay Start switch schedules the current target with the configured delay', async () => {

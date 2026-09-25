@@ -19,6 +19,8 @@ npm pack            # tarball for installing into the Homebridge container
 node dist/cli/probe.js help   # cosori-probe diagnostic CLI
 ```
 
+**Work on a branch, never on `main`.** Branch from an up-to-date `main` (`feat/…`, `fix/…`, `docs/…`), push it and open a PR with `gh pr create`, so the maintainer can review it (`/code-review`) and merge. Tell the user which branch or commit is deployed when a Pi deploy is built from a branch.
+
 Before every commit, run lint, typecheck, test and build, and **gate the commit on them passing**. Don't chain `git commit` after a test run whose failure you don't check. CI (`.github/workflows/ci.yml`) runs the same steps on Node 22, 24 and 26.
 
 ## Layout

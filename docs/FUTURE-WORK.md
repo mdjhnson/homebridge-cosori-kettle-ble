@@ -13,22 +13,53 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 
 **Open question to test first:** does registering a new key unpair the VeSync app? This is unknown. Test it on the maintainer's kettle with consent: `cosori-probe pair`, then check whether the app still connects. The worst case is re-adding the kettle in VeSync. Document the result in the README.
 
-## 2. Preset selector instead of five preset switches
+## 1b. Easier discovery and setup: to verify (researched 2026-09-24)
 
-**Why:** nine tiles (thermostat, On Base, five presets, Keep Warm, Delay Start) are confusing.
+**Goal:** the user shouldn't have to type a MAC or capture a key. Direction: one custom settings page. Scan → pick the kettle → put it in pairing mode → Pair → the MAC and key are saved into the config. `mac` becomes optional: auto-use the kettle when exactly one is found, and list them when there are several (homebridge-mi-hygrothermograph's "first one found" approach breaks with two devices). Model to copy: homebridge-switchbot's custom UI `/discover` endpoint ([source](https://github.com/OpenWonderLabs/homebridge-switchbot/tree/main/src/homebridge-ui)). Never pass user input to a shell (homebridge-yeelight-ble does).
 
-**Options:**
-- **Drop the preset switches by default.** The thermostat dial already snaps 180/195/205/212 °F to Green Tea / Oolong / Coffee / Boil, so the dial *is* the preset selector ("Hey Siri, set the kettle to 205"). This is the likely choice; keep the switches as opt-in.
-- A **Television service with InputSources** (one per preset) gives a real picker in the Home app, but shows up as a TV tile, which is odd.
-- A **Fan RotationSpeed** slider mapped to presets. It's a hack and not self-explanatory.
-- HomeKit has no generic dropdown characteristic, and Thermostat modes are limited to Off/Heat/Cool/Auto.
-- Also reconsider the defaults: thermostat + Keep Warm + On Base, with Delay Start and presets opt-in.
+**To verify on the kettle (each needs the maintainer's go-ahead):**
 
-## 2b. User-defined temperature switches (replaces the fixed preset toggles)
+1. **Which button enters pairing mode.** The maintainer reports that **holding the Bluetooth button for about 4 s** makes it flash and enters pairing mode, **dropping any existing connection** (e.g. the VeSync app). The docs and probe say MyBrew (PROTOCOL.md "Register" row, `cosori-probe pair` prompt, `NotInPairingModeError` hint), which may be an upstream assumption. Test `cosori-probe pair` after a Bluetooth-button hold, and after a MyBrew hold. Also check whether the hold drops the plugin's persistent connection too; the pairing flow would then have to reconnect before sending register (80) then hello (81).
+2. **Whether the advertisement shows pairing mode.** Record the manufacturer data passively (no writes) while idle, while pairing mode is flashing, while heating, and off the base. A flag would let the UI say "kettle ready to pair". Assumed layout (from the Etekcity scale decoder [`etekcity_esf551_ble`](https://github.com/Kohei-Wada/etekcity_esf551_ble/blob/main/src/etekcity_esf551_ble/detection.py), unconfirmed for the kettle): `[0]` header (`01`, upper bits may vary), `[1:7]` MAC reversed, `[7:9]` model ID BE (ours `C2 D4`, probably the CS108-NK), `[9:]` model-specific (`03 01 02`, unknown). Our full capture: `d0 06 01 26 c3 0f fa 58 fc c2 d4 03 01 02`.
+3. **Whether renaming the kettle in VeSync changes the advertised name.** Probably not (the name is a cloud field), but untested. Rename it, then `cosori-probe scan`.
+4. **Address type.** FC:58:FA and 7C:FE:62 are registered OUIs (Shenzhen XinZhongXin), so the address is very likely public and stable. Confirm with BlueZ `Device1.AddressType`.
+5. **Second phone on the same VeSync account.** Does it control the kettle without pairing mode? If it does, the key comes from the account somehow, and the cloud route below deserves another look.
 
-**Request (maintainer):** in the plugin settings, the user adds a list of **"items" that each show up as a switch**. Each item has a **name** and a **temperature**. The list comes **prefilled** with the kettle's own presets, and the user can edit, delete or add entries.
+**Name and matching:**
+- Every documented unit (all CS108-NK, about three) advertises `Cosori Gooseneck Kettle`. Other regions and models are unknown.
+- The name only arrives in the scan response, so passive scanners (ESPHome proxies) never see it, and service `fff0` is generic and caused false matches ([rygwdn/ha-cosori-kettle#13](https://github.com/rygwdn/ha-cosori-kettle/issues/13)). BlueZ discovery is active, so we do get the name.
+- **Bug:** `looksLikeKettle` in `src/cli/probe.ts` accepts any 0x06D0 device, so a VeSync scale would be listed as a kettle. Proposed matcher, as a pure function in `src/protocol/` with the capture above as a fixture: company 0x06D0 **and** the MAC echoed in bytes 1–6 **and** (model `C2D4` **or** a name containing "Cosori").
+- While the plugin is connected, the kettle stops advertising, so a scan from the settings page (a separate process) won't find it. Show the configured kettle, or pause the connection first.
 
-**Proposed config** (`config.schema.json` array, rendered as an add/remove list in the Homebridge UI):
+**VeSync cloud login: probably not worth it.**
+- Login (pyvesync 3.4.2): `/globalPlatform/api/accountAuth/v1/authByPWDOrOTM`, then `/user/api/accountManage/v1/loginByAuthorizeCode4Vesync`, with an MD5 password and US/EU hosts.
+- The device list (`/cloud/v1/deviceManaged/devices`) includes Bluetooth-only devices. An Etekcity BLE scale showed `connectionType: "BT"`, a real `macID` and **`authKey: null`** ([ioBroker forum](https://forum.iobroker.net/topic/59466/test-adapter-vesync/63)). No source shows the cloud returning a kettle key, and nobody has published the kettle's entry.
+- It would add only the MAC and the user's chosen name. Costs: a plaintext password in `config.json`, 2FA must be turned off (home-assistant/core#153551, #154305), region mismatches, and account lockouts after too many requests (RaresAil/homebridge-levoit-air-purifier discussion #104).
+- Optional check: dump your own device list with pyvesync and look at the kettle's entry. If `authKey` isn't null, treat it like the registration key.
+
+## 2. Tile layout plan (decided and built 2026-09-24)
+
+**Built** (see README "Temperature switches"). As built: temperatures are read as °F or °C by range (the ranges don't overlap), so the default list works for Celsius users; switches sharing a temperature get a warning but are kept. After review: the defaults are applied at runtime, not as a schema default (the form would otherwise fill them in for a legacy config and replace its migrated selection). So an empty list means "defaults": a new install gets the four presets, an install from before the list keeps the preset tiles it has, and there is no way to configure zero switches. While any entry is invalid, unlisted tiles are kept. Merges the two agreed ideas: fewer tiles by default (was "preset selector"), and user-defined temperature switches (was §2b). Nothing is built until the decisions at the end are made.
+
+**Why:** the maintainer's setup shows nine tiles (thermostat, On Base, five presets, Keep Warm, Delay Start) and it's confusing. The preset switches are fixed; users want their own temperatures ("Pour-over 200 °F").
+
+### What the user sees
+
+| Tile | Today (default / maintainer) | Proposed default | Notes |
+|---|---|---|---|
+| Thermostat (kettle) | ✓ / ✓ | ✓ | The main control: dial = target temperature, Heat/Off. Siri: "set the kettle to 205" |
+| On Base | ✓ / ✓ | ✓ | Occupancy sensor. Useful in automations |
+| Keep Warm | ✓ / ✓ | ✓ | Applies to the next heat, or changes the current one |
+| Delay Start | off / ✓ | off | Opt-in, unchanged |
+| Temperature switches | Boil only / all 5 presets | **Green Tea, Oolong, Coffee, Boil** (prefilled list) | Editable list in the plugin settings, see below |
+
+The dial already covers any temperature, so switches are shortcuts: one tap or one Siri phrase ("turn on Green Tea"), and usable in scenes and automations.
+
+**Single tile doesn't solve it:** the maintainer's Home app already shows the kettle as one tile (checked 2026-09-24). The clutter is the seven switches inside the kettle's detail view, so fewer, user-chosen switches is the fix.
+
+### Temperature switches (replaces `accessories.presets`)
+
+Config, rendered as an add/remove list in the Homebridge UI:
 
 ```json
 "switches": [
@@ -39,23 +70,46 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 ]
 ```
 
-- **Fields per item:**
-  - `name` (required; HAP-safe characters only, validated).
-  - `temperature`, in the `temperatureUnit` (F: 104–212, C: 40–100).
-  - Optional `keepWarmMinutes` to override the global keep-warm setting for this item (0 = no hold).
-- **Behaviour:**
-  - **On** heats to that temperature. If the temperature is one of the kettle's presets, it uses that preset (F0). Otherwise it stores the temperature as MyBrew and heats in MyBrew mode (F3, then F0 mode 5).
-  - **The switch shows On** while the kettle is heating to that item's temperature (the setpoint matches, within ±1 °F). **Off** stops the kettle.
-  - **Caveat to document:** non-preset items overwrite the MyBrew temperature stored on the kettle, which the VeSync app's MyBrew button uses.
-- **Stable identity:**
-  - Derive each HAP subtype from a hidden, generated `id` per item, not from the name or position. Renaming or reordering items then won't create new tiles in the Home app.
-  - Remove tiles whose item was deleted.
-- **Migration:** when `accessories.presets` exists, translate its enabled flags into `switches` entries and warn once. Then drop the old option.
-- **Reference note** in the settings form (a help block under the list) and in the README, so users can recreate a deleted preset:
+- **Fields:** `name` (required; letters, digits and spaces only, at least two characters, because HAP rejects other names) and `temperature` in `temperatureUnit` (F: 104–212, C: 40–100). Keep-warm stays global: the one Keep Warm switch and `keepWarmMinutes` apply to every switch.
+- **Default:** the four kettle presets above, so a new install gets sensible shortcuts. A user who wants a minimal Home app deletes them.
+- **On:** heats to that temperature. If it matches a kettle preset (within 1 °F, so Celsius values like 91 °C → Oolong work), the plugin sends that preset (F0). Otherwise it stores the temperature as MyBrew and heats in MyBrew mode (F3, then F0 mode 5), which is what the thermostat dial already does for non-preset temperatures.
+- **Shows On** while the kettle is heating or holding at that item's temperature (setpoint within 1 °F). **Off** stops the kettle. Two items with the same temperature would both show On, so validation warns about duplicates.
+- **Caveat to document:** non-preset items overwrite the MyBrew temperature stored on the kettle (the one the VeSync app's MyBrew button and the kettle's own MyBrew button use).
+- **Validation:** bad names, out-of-range temperatures and duplicate names are reported in the log and skipped; switches sharing a temperature are kept with a warning. Nothing here can crash Homebridge (same as the rest of the config).
+- **Reference note** under the list in the settings form and in the README, so a deleted preset is easy to recreate:
 
-  > **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. MyBrew uses the temperature stored on the kettle (set in the VeSync app, or by any non-preset switch). Any other temperature from 104–212 °F (40–100 °C) also works.
+  > **Kettle presets:** Green Tea 180 °F / 82 °C · Oolong 195 °F / 91 °C · Coffee 205 °F / 96 °C · Boil 212 °F / 100 °C. Any other temperature from 104–212 °F (40–100 °C) also works.
 
-- **Tests:** schema defaults, validation (range, names), migration, subtype stability across rename and reorder, preset vs MyBrew command selection, switch On/Off state from status.
+### Keeping tiles stable (a change from the original §2b)
+
+§2b proposed a hidden, generated `id` per item so renames and reorders don't create new tiles. **That doesn't work:** the Homebridge settings form can't generate hidden ids, and a plugin shouldn't write to `config.json`. Instead:
+
+- **Subtype = the item's name** turned into camelCase, e.g. `Green Tea` → `preset-greenTea`. Reordering items or changing a temperature keeps the tile (and its room, scenes and automations). Renaming an item in the config makes a new tile; the README will say to rename in the Home app instead, which never changes the tile.
+- **Bonus:** today's preset switches already use exactly those subtypes (`preset-greenTea`, `preset-oolong`, `preset-coffee`, `preset-boil`, `preset-myBrew`), so existing users' tiles, rooms and automations survive the change untouched.
+- Tiles whose item was removed are removed from HomeKit (as today when a preset is disabled).
+
+### Migration
+
+- If `switches` is absent and `accessories.presets` is present, build the list from the enabled presets (same names, the kettle's preset temperatures) and log once: "accessories.presets is deprecated; add a Temperature switches list in the plugin settings". Old configs keep working unchanged.
+- **MyBrew** has no fixed temperature (it uses whatever is stored on the kettle), so it doesn't fit a name + temperature item. **Dropped:** a config with `myBrew: true` logs once that the MyBrew switch was removed and how to add a custom temperature instead. Its tile (`preset-myBrew`) is removed.
+- Drop `accessories.presets` from the schema; keep reading it for at least one release.
+
+### Maintainer's setup after the change (suggested)
+
+Thermostat, On Base, Keep Warm, and whichever temperature switches you actually tap (maybe just Boil and Green Tea). Delay Start off unless you use it. Or keep everything and use "Show as Single Tile".
+
+### Decisions (made by the user 2026-09-24)
+
+1. **Default switches for new installs:** the four kettle presets (Green Tea, Oolong, Coffee, Boil).
+2. **Single tile:** already in effect on the maintainer's phone; it doesn't reduce the switches inside the tile.
+3. **MyBrew:** dropped (migrates to a one-time log note).
+4. **Per-switch keep-warm:** no. One Keep Warm switch and one global time. Not planned.
+
+**Related, suggested (not decided): Delay Start.** A toggle with a fixed delay can't express "at 6:45". Siri timed requests ("at 11:15 pm turn on Green Tea") and Home app automations do that better. The kettle-side timer's only advantage is that it still fires if the Pi, Homebridge or the BLE link is down at that moment, while a HomeKit-scheduled command is refused after 15 s of outage. Suggestion: keep it as an opt-in (default off, as today), document the trade-off in the README, and turn it off in the maintainer's config.
+
+### Tests
+
+Schema defaults; validation (names, range, duplicates, Celsius); migration from `accessories.presets` (including the MyBrew note); subtype stability across reorder and temperature change; tile removal; preset vs MyBrew command selection (including Celsius rounding); switch On/Off from status.
 
 ## 3. Radio robustness
 

@@ -5,6 +5,7 @@
  * Values here were cross-checked against real captured packets, not only the upstream docs
  * (which contain known errors — see README "Protocol notes").
  */
+import { clamp, cToF } from '../util/temperature.js';
 
 export const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
 /** Notifications from the kettle. */
@@ -108,6 +109,23 @@ export const PRESET_TEMP_F: Readonly<Record<number, number>> = {
   [Mode.BOIL]: 212,
 };
 
+/** Map a target temperature to a preset mode when within ±1 °F of a preset (after rounding). */
+export function presetForTemp(tempF: number): number | undefined {
+  const rounded = Math.round(tempF);
+  for (const [mode, preset] of Object.entries(PRESET_TEMP_F)) {
+    if (Math.abs(rounded - preset) <= 1) {
+      return Number(mode);
+    }
+  }
+  return undefined;
+}
+
+/** The setpoint the kettle heats to for a target: the preset's own temperature when the target snaps to one, else the target. */
+export function effectiveSetpointF(tempF: number): number {
+  const mode = presetForTemp(tempF);
+  return mode === undefined ? Math.round(tempF) : PRESET_TEMP_F[mode]!;
+}
+
 /** Status byte [4]. */
 export const Stage = {
   IDLE: 0x00,
@@ -140,6 +158,11 @@ export const Completion = {
 /** Setpoint range accepted by the kettle (°F). */
 export const MIN_SETPOINT_F = 104;
 export const MAX_SETPOINT_F = 212;
+
+/** A temperature in °C as the kettle's integer °F setpoint, clamped to the accepted range. */
+export function setpointFromC(c: number): number {
+  return clamp(Math.round(cToF(c)), MIN_SETPOINT_F, MAX_SETPOINT_F);
+}
 
 /** Temperature readings outside this range are treated as invalid (°F). */
 export const MIN_VALID_READING_F = 40;

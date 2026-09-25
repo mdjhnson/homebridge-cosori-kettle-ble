@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AckTimeoutError, CommandRejectedError, InvalidRegistrationKeyError, NotConnectedError, NotInPairingModeError,
 } from '../../src/kettle/errors.js';
-import { KettleClient, presetForTemp } from '../../src/kettle/KettleClient.js';
-import { buildFrame, Cmd, fromHex, Mode, parseFrame, parseKey, ProtocolVersion } from '../../src/protocol/index.js';
+import { KettleClient } from '../../src/kettle/KettleClient.js';
+import {
+  buildFrame, Cmd, effectiveSetpointF, fromHex, Mode, parseFrame, parseKey, presetForTemp, ProtocolVersion,
+} from '../../src/protocol/index.js';
 import { COMPACT_FRAMES, COMPLETION_FRAMES, EXTENDED_FRAMES, OWN_KETTLE_FRAMES } from '../fixtures/captures.js';
 import { FakeTransport, type Responder } from './FakeTransport.js';
 
@@ -228,5 +230,9 @@ describe('presetForTemp', () => {
     [179.6, Mode.GREEN_TEA], [170, undefined], [200, undefined], [104, undefined],
   ])('%s °F → %s', (t, mode) => {
     expect(presetForTemp(t)).toBe(mode);
+  });
+
+  it('effectiveSetpointF snaps preset-adjacent targets to the preset and keeps others', () => {
+    expect([181, 179, 196, 211, 200, 201, 104].map(effectiveSetpointF)).toEqual([180, 180, 195, 212, 200, 201, 104]);
   });
 });

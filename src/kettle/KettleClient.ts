@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 
 import type { DeviceInfo, KettleTransport } from '../ble/Transport.js';
 import {
-  Cmd, Completion, FrameType, isHeatingStage, Mode, PRESET_TEMP_F, ProtocolVersion, Stage,
+  Cmd, Completion, FrameType, isHeatingStage, Mode, presetForTemp, ProtocolVersion, Stage,
 } from '../protocol/constants.js';
 import {
   commandFrame, compactStatusPayload, delayedStartPayload, helloPayload, pollPayload, registerPayload, setHoldPayload, setModePayload,
@@ -68,17 +68,6 @@ type Events = {
   frame: [direction: 'tx' | 'rx', bytes: Buffer];
   disconnect: [];
 };
-
-/** Map a target temperature to a preset mode when within ±1 °F of a preset (after rounding). */
-export function presetForTemp(tempF: number): number | undefined {
-  const rounded = Math.round(tempF);
-  for (const [mode, preset] of Object.entries(PRESET_TEMP_F)) {
-    if (Math.abs(rounded - preset) <= 1) {
-      return Number(mode);
-    }
-  }
-  return undefined;
-}
 
 export function describeCompletion(code: number): string {
   if (code === Completion.HEATING_DONE) {

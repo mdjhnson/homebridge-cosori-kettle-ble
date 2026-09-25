@@ -3,7 +3,7 @@
  *
  *  - Thermostat (primary): current / target temperature, heat on/off
  *  - Occupancy sensor "On Base" (optional)
- *  - Switches: presets, Keep Warm, Delay Start (each optional)
+ *  - Switches: the user's temperature switches (default: the kettle presets), Keep Warm, Delay Start
  *
  * GET handlers answer from cached state (or "No Response" when it is stale). SET handlers validate,
  * update the tile optimistically and run the kettle command in the background: a BLE connection can
@@ -12,15 +12,14 @@
  */
 import type { API, CharacteristicValue, PlatformAccessory, Service, WithUUID } from 'homebridge';
 
-import type { KettlePluginConfig } from '../config.js';
+import { DEFAULT_SWITCHES, type KettlePluginConfig, type TemperatureSwitch } from '../config.js';
 import type { ConnectionManager } from '../kettle/ConnectionManager.js';
 import { describeCompletion, type KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
-import { Mode, PRESET_TEMP_F } from '../protocol/constants.js';
+import { effectiveSetpointF, Mode, PRESET_TEMP_F } from '../protocol/constants.js';
 import { errorMessage } from '../util/async.js';
 import type { Logger } from '../util/log.js';
 import {
-  currentFToC, firmwareRevision, PRESETS, type PresetDefinition, TARGET_MAX_C, TARGET_MIN_C, TARGET_STEP_C, targetCToF, targetFToC,
-  TemperatureSmoother,
+  currentFToC, firmwareRevision, TARGET_MAX_C, TARGET_MIN_C, TARGET_STEP_C, targetCToF, targetFToC, TemperatureSmoother,
 } from './mapping.js';
 
 /** Names the Home app assigns by itself: the service type, optionally followed by a number. */
@@ -34,6 +33,11 @@ interface KettleContext {
   targetF?: number;
   /** Keep-warm preference applied when heating starts. */
   keepWarm?: boolean;
+  /**
+   * Created by a version with the switch list (set once, when the platform creates the accessory). Such an install
+   * with no list configured gets DEFAULT_SWITCHES; an older one keeps its preset tiles.
+   */
+  createdWithSwitchList?: boolean;
 }
 
 export class KettleAccessory {
@@ -41,7 +45,7 @@ export class KettleAccessory {
   private readonly onBase?: Service;
   private readonly keepWarm?: Service;
   private readonly delayStart?: Service;
-  private readonly presetSwitches = new Map<PresetDefinition['key'], Service>();
+  private readonly temperatureSwitches: { item: TemperatureSwitch; service: Service }[] = [];
   private readonly smoother = new TemperatureSmoother();
   private readonly ctx: KettleContext;
   private infoUpdated = false;
@@ -52,9 +56,14 @@ export class KettleAccessory {
     private readonly config: KettlePluginConfig,
     private readonly accessory: PlatformAccessory,
     private readonly manager: ConnectionManager,
+    /** True when the platform just created this accessory, false when it was restored from the cache. */
+    created: boolean,
   ) {
     const { Service: S, Characteristic: C } = api.hap;
     this.ctx = accessory.context as KettleContext;
+    if (created) {
+      this.ctx.createdWithSwitchList = true;
+    }
     this.ctx.mac = config.mac;
     this.ctx.keepWarm ??= true;
 
@@ -94,16 +103,36 @@ export class KettleAccessory {
         ? C.OccupancyDetected.OCCUPANCY_NOT_DETECTED
         : C.OccupancyDetected.OCCUPANCY_DETECTED)));
 
-    // --- Preset switches -----------------------------------------------------------------------
-    for (const preset of PRESETS) {
-      const svc = this.optionalService(config.accessories.presets[preset.key], S.Switch, `preset-${preset.key}`, preset.label);
-      if (!svc) {
-        continue;
+    // --- Temperature switches ------------------------------------------------------------------
+    const switches = config.switches ?? this.defaultSwitches();
+    const wanted = new Set(switches.map((item) => item.subtype));
+    const unlisted = accessory.services.filter((svc) => svc.UUID === S.Switch.UUID && svc.subtype?.startsWith('preset-') && !wanted.has(svc.subtype));
+    if (config.switchesSkipped && unlisted.length > 0) {
+      // A typo in a switch entry must not delete its tile (and with it the tile's room and automations).
+      log.warn(`${config.name}: keeping ${unlisted.map((svc) => `"${svc.displayName}"`).join(', ')} until the skipped switch entries `
+        + 'are fixed; they do nothing meanwhile');
+      for (const svc of unlisted) {
+        svc.getCharacteristic(C.On)
+          .onGet(() => false)
+          .onSet(() => {
+            log.warn(`${config.name}: "${svc.displayName}" is not in the switch list; fix the skipped entries in the plugin settings`);
+            setTimeout(() => svc.updateCharacteristic(C.On, false), 200);
+            // Fail the SET so an automation or Siri reports it instead of claiming success.
+            throw new api.hap.HapStatusError(api.hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+          });
       }
-      this.presetSwitches.set(preset.key, svc);
-      svc.getCharacteristic(C.On)
-        .onGet(() => this.read((s) => s.active && s.mode === preset.mode))
-        .onSet((v) => this.setPreset(preset, Boolean(v)));
+    } else {
+      // Drop tiles for switches that were removed from the config (and the retired MyBrew switch).
+      for (const svc of unlisted) {
+        accessory.removeService(svc);
+      }
+    }
+    for (const item of switches) {
+      const service = this.ensureService(S.Switch, item.subtype, item.name);
+      this.temperatureSwitches.push({ item, service });
+      service.getCharacteristic(C.On)
+        .onGet(() => this.read((s) => this.switchOn(item, s)))
+        .onSet((v) => this.setSwitch(item, Boolean(v)));
     }
 
     // --- Keep warm -----------------------------------------------------------------------------
@@ -139,7 +168,24 @@ export class KettleAccessory {
   }
 
   private displayTargetF(s: KettleStatus): number {
-    return s.active || s.scheduled ? s.setpointF : this.ctx.targetF ?? s.setpointF;
+    return s.active || s.scheduled ? this.heatingToF(s) : this.ctx.targetF ?? s.setpointF;
+  }
+
+  /**
+   * The temperature the kettle is heating to. A preset mode fixes it. In MyBrew mode it is the MyBrew temperature
+   * (status byte 8, which heatTo sets with F3 first): no capture shows what the setpoint byte holds in that mode.
+   */
+  private heatingToF(s: KettleStatus): number {
+    const preset = PRESET_TEMP_F[s.mode];
+    if (preset !== undefined) {
+      return preset;
+    }
+    return s.mode === Mode.MY_BREW && s.myTempF !== undefined ? s.myTempF : s.setpointF;
+  }
+
+  /** On while the kettle is heating or holding at this switch's temperature. */
+  private switchOn(item: TemperatureSwitch, s: KettleStatus): boolean {
+    return s.active && effectiveSetpointF(this.heatingToF(s)) === item.temperatureF;
   }
 
   private keepWarmOn(s: KettleStatus): boolean {
@@ -196,30 +242,17 @@ export class KettleAccessory {
     }
   }
 
-  private setPreset(preset: PresetDefinition, on: boolean): void {
+  private setSwitch(item: TemperatureSwitch, on: boolean): void {
     this.assertCanCommand();
     if (!on) {
-      this.exec(`stop ${preset.key}`, (c) => c.stop(), () => !!this.manager.status?.active && this.manager.status.mode === preset.mode);
+      this.exec(`stop ${item.name}`, (c) => c.stop(), () => !!this.manager.status && this.switchOn(item, this.manager.status));
       return;
     }
     this.assertOnBase();
-    if (preset.mode === Mode.MY_BREW) {
-      const myTempF = this.manager.status?.myTempF ?? this.ctx.targetF;
-      if (!myTempF) {
-        this.log.warn(`${this.config.name}: MyBrew temperature unknown yet; set a target temperature first`);
-        setTimeout(() => this.resync(), 500);
-        return;
-      }
-      this.ctx.targetF = myTempF;
-      this.exec(`MyBrew ${myTempF}°F`, async (c) => {
-        await c.setMyTemp(myTempF);
-        await c.setMode(Mode.MY_BREW, { tempF: myTempF, holdSeconds: this.holdSeconds() });
-      });
-    } else {
-      this.ctx.targetF = PRESET_TEMP_F[preset.mode];
-      this.exec(`${preset.key}`, (c) => c.setMode(preset.mode, { holdSeconds: this.holdSeconds() }));
-    }
+    this.ctx.targetF = item.temperatureF;
     this.api.updatePlatformAccessories([this.accessory]);
+    // heatTo uses the kettle's preset when the temperature is one (±1 °F), otherwise MyBrew.
+    this.exec(`${item.name} (${item.temperatureF}°F)`, (c) => c.heatTo(item.temperatureF, this.holdSeconds()));
   }
 
   private setKeepWarm(on: boolean): void {
@@ -284,8 +317,8 @@ export class KettleAccessory {
       this.onBase?.updateCharacteristic(C.OccupancyDetected,
         s.onBase ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
     }
-    for (const preset of PRESETS) {
-      this.presetSwitches.get(preset.key)?.updateCharacteristic(C.On, s.active && s.mode === preset.mode);
+    for (const { item, service } of this.temperatureSwitches) {
+      service.updateCharacteristic(C.On, this.switchOn(item, s));
     }
     this.keepWarm?.updateCharacteristic(C.On, this.keepWarmOn(s));
     this.delayStart?.updateCharacteristic(C.On, s.scheduled);
@@ -310,33 +343,54 @@ export class KettleAccessory {
 
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * Switches when the config has no list: the kettle presets for a new install. An install from before the list
+   * keeps the preset tiles it has (the old default was Boil only), so an upgrade never adds tiles on its own.
+   */
+  private defaultSwitches(): TemperatureSwitch[] {
+    if (this.ctx.createdWithSwitchList) {
+      return [...DEFAULT_SWITCHES];
+    }
+    const { Service: S } = this.api.hap;
+    const kept = DEFAULT_SWITCHES.filter((item) => this.accessory.getServiceById(S.Switch, item.subtype));
+    this.log.info(`${this.config.name}: no temperature switches configured; keeping your existing preset tiles `
+      + `(${kept.map((item) => item.name).join(', ') || 'none'}). Add switches under "Temperature switches" in the plugin settings.`);
+    return kept;
+  }
+
   /** Add (or keep) a named sub-service when enabled; remove a cached one when disabled. */
   private optionalService(enabled: boolean, type: WithUUID<typeof Service>, subtype: string, name: string): Service | undefined {
-    const existing = this.accessory.getServiceById(type, subtype);
     if (!enabled) {
+      const existing = this.accessory.getServiceById(type, subtype);
       if (existing) {
         this.accessory.removeService(existing);
       }
       return undefined;
     }
-    const svc = existing ?? this.accessory.addService(type, name, subtype);
+    return this.ensureService(type, subtype, name);
+  }
+
+  /** Add (or keep) a named sub-service. */
+  private ensureService(type: WithUUID<typeof Service>, subtype: string, name: string): Service {
+    const svc = this.accessory.getServiceById(type, subtype) ?? this.accessory.addService(type, name, subtype);
     this.applyName(svc, name);
     return svc;
   }
 
   /**
    * Set Name and ConfiguredName. The Home app shows ConfiguredName and, when a bridge is added, may overwrite
-   * it with generic defaults ("Switch 3", "Occupancy Sensor"). Restore ours in that case, but keep any name
-   * the user chose.
+   * it with generic defaults ("Switch 3", "Occupancy Sensor"). Restore ours in that case, and follow a rename
+   * in the config, but keep any name the user chose in the Home app.
    */
   private applyName(svc: Service, name: string): void {
     const { Characteristic: C } = this.api.hap;
+    const previous = svc.getCharacteristic(C.Name).value;
     svc.setCharacteristic(C.Name, name);
     if (!svc.testCharacteristic(C.ConfiguredName)) {
       svc.addOptionalCharacteristic(C.ConfiguredName);
     }
     const current = svc.getCharacteristic(C.ConfiguredName).value;
-    if (typeof current !== 'string' || current.trim() === '' || isHomeAppDefaultName(current)) {
+    if (typeof current !== 'string' || current.trim() === '' || isHomeAppDefaultName(current) || current === previous) {
       svc.updateCharacteristic(C.ConfiguredName, name);
     }
   }
