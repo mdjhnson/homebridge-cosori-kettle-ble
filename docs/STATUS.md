@@ -52,5 +52,5 @@ _Last updated: 2026-09-24 (evening, US Central)._
 
 1. Open issue 1: follow its plan (reconnect logging deployed 2026-09-24; measure drops and their HomeKit impact during normal use, then decide).
 2. Finish the Checkpoint C list: heat and off via the dial, a preset, Keep Warm holding after the heat finishes, Delay Start on and off, and On Base.
-3. Tile layout: temperature switches built and deployed (PR `feat/temperature-switches`). Review fixes applied on the branch (not yet deployed). Review and merge the PR. The form no longer fills in a default list; with the list empty, this (pre-list) install keeps the preset tiles it already has.
+3. Tile layout: temperature switches built and deployed (PR `feat/temperature-switches`). Review fixes deployed to the Pi (`85ed8b7`, 2026-09-24); the Pi's config has a list (Green Tea, Coffee, Boil) and those three tiles carried over. Review and merge the PR.
 4. Replace `node-ble` (FUTURE-WORK §3b, agreed).
