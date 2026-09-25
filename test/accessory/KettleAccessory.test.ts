@@ -38,10 +38,12 @@ const until = async (cond: () => boolean, ms = 1000) => {
 const managers: ConnectionManager[] = [];
 
 async function setup(opts: { status?: Buffer; overrides?: Record<string, unknown>; start?: boolean } = {}) {
-  let status = opts.status ?? IDLE;
+  let status: Buffer | undefined = opts.status ?? IDLE; // undefined: polls go unanswered
   const fake = new FakeTransport((frame, f) => {
     if (frame.payload[1] === Cmd.POLL) {
-      f.notify(buildFrame(0x12, frame.seq, status));
+      if (status) {
+        f.notify(buildFrame(0x12, frame.seq, status));
+      }
     } else {
       f.ack(frame, frame.payload[1] === Cmd.HELLO ? [0] : []);
     }
@@ -63,7 +65,7 @@ async function setup(opts: { status?: Buffer; overrides?: Record<string, unknown
   const sub = (type: typeof S.Switch | typeof S.OccupancySensor, subtype: string) => accessory.getServiceById(type, subtype);
   const sentCmds = () => fake.sent.map((f: Frame) => f.payload[1]).filter((c) => c !== Cmd.POLL && c !== Cmd.HELLO);
   const lastSent = (cmd: number) => [...fake.sent].reverse().find((f) => f.payload[1] === cmd);
-  const setStatus = (s: Buffer) => {
+  const setStatus = (s: Buffer | undefined) => {
     status = s;
   };
   return { fake, manager, accessory, thermostat, sub, sentCmds, lastSent, setStatus };
@@ -245,6 +247,26 @@ describe('KettleAccessory reads', () => {
       expect(await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
       expect(await thermostat().getCharacteristic(C.TargetTemperature).handleGetRequest()).toBe(86.5); // 188 °F
     }
+  });
+
+  it('follows a compact MyBrew retarget, not the stale MyBrew temperature of the last extended status', async () => {
+    // Heating in MyBrew to 193, then F3 188 + F0 MyBrew: the kettle pushes compactMyBrewHeating188. The poll that
+    // follows goes unanswered (the link drops), so the status keeps myTempF 193 from the last extended one.
+    const at193 = Buffer.from(payload(OWN_KETTLE_FRAMES.extendedMyBrewHeating188));
+    at193[6] = 193;
+    at193[8] = 193;
+    const { fake, manager, sub, thermostat, setStatus } = await setup({
+      status: at193, overrides: { switches: [{ name: 'Tea 188', temperature: 188 }, { name: 'Tea 193', temperature: 193 }] },
+    });
+    expect(await sub(S.Switch, 'preset-tea193')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+    setStatus(undefined);
+    fake.notify(OWN_KETTLE_FRAMES.compactMyBrewHeating188);
+    await until(() => manager.status?.setpointF === 188);
+    expect(manager.status?.myTempF).toBe(193);
+    expect(await sub(S.Switch, 'preset-tea188')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+    expect(await sub(S.Switch, 'preset-tea193')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
+    expect(await thermostat().getCharacteristic(C.TargetTemperature).handleGetRequest()).toBe(86.5); // 188 °F
+    expect(thermostat().getCharacteristic(C.TargetTemperature).value).toBe(86.5); // pushed, too
   });
 
   it('follows the mode, not byte 6, while an F3 lands during a preset heat', async () => {
