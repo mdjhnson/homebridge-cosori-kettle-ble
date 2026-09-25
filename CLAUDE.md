@@ -19,7 +19,7 @@ npm pack            # tarball for installing into the Homebridge container
 node dist/cli/probe.js help   # cosori-probe diagnostic CLI
 ```
 
-Before every commit, run lint, typecheck, test and build, and **gate the commit on them passing**. Don't chain `git commit` after a test run whose failure you don't check. CI (`.github/workflows/ci.yml`) runs the same steps on Node 22 and 24.
+Before every commit, run lint, typecheck, test and build, and **gate the commit on them passing**. Don't chain `git commit` after a test run whose failure you don't check. CI (`.github/workflows/ci.yml`) runs the same steps on Node 22, 24 and 26.
 
 ## Layout
 

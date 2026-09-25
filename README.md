@@ -41,7 +41,7 @@ The plugin never touches the Bluetooth hardware itself. BlueZ on the host owns t
 ## Requirements
 
 - Linux host running BlueZ (`bluetoothd`) with a BLE-capable adapter (tested target: Raspberry Pi 4, Raspberry Pi OS).
-- Node.js 22.10+ or 24 (the current `homebridge/homebridge` image ships a supported version).
+- Node.js 22.10+, 24 or 26 (the current `homebridge/homebridge` image ships a supported version).
 - Homebridge 1.8+ or 2.x.
 - The kettle within BLE range of the host.
 
@@ -350,7 +350,7 @@ npm test          # protocol + client tests against captured packets, no hardwar
 npm run build
 ```
 
-CI runs lint, type-check, build and tests on Node 22 and 24.
+CI runs lint, type-check, build and tests on Node 22, 24 and 26.
 
 ## Credits
 
