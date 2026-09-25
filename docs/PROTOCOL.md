@@ -58,9 +58,9 @@ Tapping presets in the app sends nothing; the app only sends F0 or F1 when you p
 |---|---|---|
 | 4 | stage: 0 idle, 1 heating, 2 almost done, 3 holding, **5 delay scheduled** | U; stage 5 from O |
 | 5 | mode (1 green, 2 oolong, 3 coffee, 4 boil, 5 MyBrew, 6 heat V0) | U, O |
-| 6 | setpoint °F | U, O |
+| 6 | setpoint °F. In MyBrew mode it is the MyBrew temperature, like `[8]`. An F3 changes it at once, even while a preset is still heating, before an F0 switches the mode | U, O (MyBrew heat and hold at 188 °F, 2026-09-25) |
 | 7 | current temperature °F (40–230 valid) | U, O |
-| 8 | MyBrew temperature °F | U, O (140 = the app's MyBrew button) |
+| 8 | MyBrew temperature °F | U, O (140 = the app's MyBrew button; 188 while heating and holding in MyBrew mode) |
 | 9 | `01` while a hold or schedule is armed (scheduled; heating with a hold pending) | U, O |
 | 10–11 | configured hold, s LE | U, O |
 | 12–13 | remaining hold, s LE | U |

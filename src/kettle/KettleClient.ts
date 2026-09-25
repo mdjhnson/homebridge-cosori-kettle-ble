@@ -28,6 +28,7 @@ export interface KettleStatus {
   mode: number;
   setpointF: number;
   tempF: number;
+  /** Stored MyBrew temperature, from the last extended status: compact statuses don't carry it, so it can be stale. */
   myTempF?: number;
   configuredHoldSeconds: number;
   remainingHoldSeconds: number;

@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-09-24 (evening, US Central)._
+_Last updated: 2026-09-25 (just after midnight, US Central)._
 
 ## Checkpoints
 
@@ -9,7 +9,7 @@ _Last updated: 2026-09-24 (evening, US Central)._
 | A — probe against the real kettle (read-only) | ✅ done | scan, info (HW 1.0.00 / SW R0007V0012 → V1), key from the app's `.pklg`, hello accepted, status/watch, lift off base / put back |
 | Connectivity soak (15 min, idle, kettle and Pi in their normal spots) | ✅ 156/156 polls, 0 drops | The first connect took 38 s; connects take 10–40 s from the normal spot vs about 2 s up close |
 | B — documented writes from the plugin | 🟡 partial | F1 delayed start 5 min, then F4 cancel, verified live (stage 5, countdown). F0 hold byte order confirmed LE **from the app capture**, not yet sent by the plugin. Boil (F0) was sent via HomeKit and the kettle started heating |
-| C — HomeKit on the Pi | 🟡 in progress | Child bridge "Kettle Bridge" paired in the Home app. Boil via HomeKit worked. The link drops (0x08 supervision timeouts) on the onboard radio and, less badly, on a USB adapter; it now recovers by itself (see Open issue 1) |
+| C — HomeKit on the Pi | 🟡 in progress | Child bridge "Kettle Bridge" paired in the Home app. Boil via HomeKit worked; on 2026-09-25 a MyBrew heat, hold and off via the dial worked too. The link drops (0x08 supervision timeouts) on the onboard radio and, less badly, on a USB adapter; it now recovers by itself (see Open issue 1) |
 
 ## Deployed on the Pi
 
@@ -48,11 +48,10 @@ _Last updated: 2026-09-24 (evening, US Central)._
 3. ~~**Too many tiles.**~~ **Fixed:** the user was confused by nine tiles (seven switches inside the kettle's tile). The editable temperature-switch list (FUTURE-WORK §2) replaced the fixed presets: merged in PR #1 and deployed 2026-09-25. The Pi's list is Green Tea, Coffee, Boil.
 4. **Taps while disconnected** were queued, then failed after 45 s. Fixed in `f8ff1ac` (fails fast after the link has been down 15 s), deployed 2026-09-24.
 5. **Known, harmless: `gyp ERR!` for `usocket` in npm install logs.** Seen on the Pi (Node 24.20.0) while installing another plugin through the Homebridge UI. npm re-runs install scripts across `/homebridge`, and `usocket@0.3.0` (an optional dependency, via node-ble ~1.13.0 → dbus-next 0.10.2) pins node-gyp ^7.1.2, which can't build on Node 24. It isn't a missing toolchain: the container has python3, make and g++. npm skips the optional dep and the install succeeds. `usocket` has been absent from the plugin's `node_modules` on the Pi since the first tarball install, so the plugin has always run without it. `dbus-next/lib/connection.js` wraps `require('usocket')` for `unix:path=` addresses in a try/catch and falls back to `net.createConnection`. That only loses Unix-FD passing (node-ble doesn't use AcquireNotify/AcquireWrite) and `unix:abstract=` addresses (not used for the system bus). The cost is a scary log line and a failed native build on every plugin install. `overrides` in our `package.json` don't apply to consumer installs. **Decision: leave it, documented in README Troubleshooting.** Don't add an `overrides` entry to the shared `/homebridge/package.json` on the Pi. See FUTURE-WORK §3 for the longer-term option.
-6. **Unverified: what the status reports while heating in MyBrew mode (mode 5).** No capture shows status bytes 6 (setpoint) and 8 (MyBrew temperature) during a MyBrew heat. A switch at a non-preset temperature (e.g. Pour Over 200) shows On when the kettle is active in mode 5 and byte 8 equals its temperature (falling back to byte 6 when a status has no byte 8), because heatTo sets byte 8 with F3 before starting. If a custom switch never shows On while heating, this is why. To verify: heat with a custom switch (water in the kettle), then check `cosori-probe status`, or capture it and run `cosori-probe decode-log`, and add the frame to `OWN_KETTLE_FRAMES`.
+6. ~~**Unverified: what the status reports while heating in MyBrew mode (mode 5).**~~ **Verified 2026-09-25:** the user turned the HomeKit dial to 180, then 193, then 188 °F within 4 s (the plugin sent F0 green tea, then F3 + F0 MyBrew twice), with a 30 min hold. btmon on the Pi showed byte 6 at 188 through heating, completion `20` and the hold (stage 3), in extended and compact statuses, with byte 8 (extended only) at 188 too. Also seen: an F3 changes byte 6 at once, while a preset is still heating; the plugin follows the mode there. Frames are in `OWN_KETTLE_FRAMES` (`…MyBrew…`, `compactF3DuringGreenTea`). **Fixed on PR #3, not deployed yet:** the plugin read byte 8 in MyBrew mode, and a compact status keeps byte 8 from the last extended one, so after retargeting from one custom temperature to another the target and switches showed the old temperature until the next extended status (for good if that poll failed). The plugin now reads byte 6 in MyBrew mode, which every status carries.
 
 ## Next steps
 
 1. Open issue 1: follow its plan (reconnect logging deployed 2026-09-24; measure drops and their HomeKit impact during normal use, then decide).
-2. Finish the Checkpoint C list: heat and off via the dial, a preset, Keep Warm holding after the heat finishes, Delay Start on and off, and On Base.
-3. Open issue 6: confirm the MyBrew-mode status bytes with a custom-temperature switch (needs water in the kettle), then add the frame to `OWN_KETTLE_FRAMES`.
-4. Replace `node-ble` (FUTURE-WORK §3b, agreed).
+2. Finish the Checkpoint C list. Done 2026-09-25: heat and off via the dial (including retargeting while heating) and Keep Warm holding after the heat finished. Still to do: a preset switch, Delay Start on and off, and On Base.
+3. Replace `node-ble` (FUTURE-WORK §3b, agreed).
