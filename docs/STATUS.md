@@ -9,7 +9,7 @@ _Last updated: 2026-09-24 (evening, US Central)._
 | A — probe against the real kettle (read-only) | ✅ done | scan, info (HW 1.0.00 / SW R0007V0012 → V1), key from the app's `.pklg`, hello accepted, status/watch, lift off base / put back |
 | Connectivity soak (15 min, idle, kettle and Pi in their normal spots) | ✅ 156/156 polls, 0 drops | The first connect took 38 s; connects take 10–40 s from the normal spot vs about 2 s up close |
 | B — documented writes from the plugin | 🟡 partial | F1 delayed start 5 min, then F4 cancel, verified live (stage 5, countdown). F0 hold byte order confirmed LE **from the app capture**, not yet sent by the plugin. Boil (F0) was sent via HomeKit and the kettle started heating |
-| C — HomeKit on the Pi | 🟡 in progress | Child bridge "Kettle Bridge" paired in the Home app. Boil via HomeKit worked. The link drops (0x08 supervision timeouts) on the onboard radio and, less badly, on a USB adapter; it now recovers by itself (see Open issue 1) |
+| C — HomeKit on the Pi | 🟡 in progress | Child bridge "Kettle Bridge" paired in the Home app. Boil via HomeKit worked; on 2026-09-25 a MyBrew heat, hold and off via the dial worked too. The link drops (0x08 supervision timeouts) on the onboard radio and, less badly, on a USB adapter; it now recovers by itself (see Open issue 1) |
 
 ## Deployed on the Pi
 
@@ -53,5 +53,5 @@ _Last updated: 2026-09-24 (evening, US Central)._
 ## Next steps
 
 1. Open issue 1: follow its plan (reconnect logging deployed 2026-09-24; measure drops and their HomeKit impact during normal use, then decide).
-2. Finish the Checkpoint C list. Done 2026-09-25: heat via the dial (including retargeting while heating) and Keep Warm holding after the heat finished. Still to do: off via the dial, a preset switch, Delay Start on and off, and On Base.
+2. Finish the Checkpoint C list. Done 2026-09-25: heat and off via the dial (including retargeting while heating) and Keep Warm holding after the heat finished. Still to do: a preset switch, Delay Start on and off, and On Base.
 3. Replace `node-ble` (FUTURE-WORK §3b, agreed).
