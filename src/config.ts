@@ -2,9 +2,8 @@
  * Platform configuration (see config.schema.json). Parsing is defensive: invalid values are replaced
  * by defaults and reported, so a typo never crashes Homebridge.
  */
-import { targetCToF } from './accessory/mapping.js';
 import {
-  effectiveSetpointF, MAX_DELAY_SECONDS, MAX_HOLD_SECONDS, MAX_SETPOINT_F, MIN_SETPOINT_F, Mode, PRESET_TEMP_F,
+  effectiveSetpointF, MAX_DELAY_SECONDS, MAX_HOLD_SECONDS, MAX_SETPOINT_F, MIN_SETPOINT_F, Mode, PRESET_TEMP_F, setpointFromC,
 } from './protocol/constants.js';
 import { isValidKeyString, parseKey } from './protocol/key.js';
 
@@ -27,8 +26,11 @@ const KETTLE_PRESETS = [
   { name: 'Boil', mode: Mode.BOIL, legacyKey: 'boil', legacyDefault: true },
 ] as const;
 
-/** Letters, digits and single spaces, starting and ending with a letter or digit (HAP rejects other names). */
-const SWITCH_NAME_RE = /^[\p{L}\p{N}]([\p{L}\p{N} ]*[\p{L}\p{N}])?$/u;
+/**
+ * Letters, digits and single spaces, starting and ending with a letter or digit, so at least two characters
+ * (HAP rejects other names). config.schema.json has a looser pattern that never blocks a name valid here.
+ */
+export const SWITCH_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ]*[\p{L}\p{N}]$/u;
 
 export interface KettlePluginConfig {
   name: string;
@@ -107,7 +109,7 @@ export const DEFAULT_SWITCHES: readonly TemperatureSwitch[] = KETTLE_PRESETS.map
  */
 export function switchTemperatureF(value: number): number | undefined {
   if (value >= 40 && value <= 100) {
-    return targetCToF(value);
+    return setpointFromC(value);
   }
   if (value >= MIN_SETPOINT_F && value <= MAX_SETPOINT_F) {
     return Math.round(value);
@@ -126,16 +128,19 @@ function parseSwitches(
   raw: Record<string, unknown>, accessoriesRaw: Record<string, unknown>, warnings: string[],
 ): { switches?: TemperatureSwitch[]; skipped: boolean } {
   let entries: { item: unknown; index: number }[] = [];
+  // A "switches" value that is not a list is a broken list: keep the existing tiles rather than delete them.
+  let notAList = false;
   if (Array.isArray(raw.switches)) {
     entries = raw.switches.map((item: unknown, index) => ({ item, index })).filter(({ item }) => !isBlankEntry(item));
-  } else if (raw.switches !== undefined) {
-    warnings.push('"switches" must be a list; ignoring it');
+  } else if (raw.switches !== undefined && raw.switches !== null) {
+    warnings.push('"switches" must be a list; ignoring it (existing switch tiles are kept until this is fixed)');
+    notAList = true;
   }
 
   if (entries.length === 0) {
     const presetsRaw = accessoriesRaw.presets;
     if (!presetsRaw || typeof presetsRaw !== 'object') {
-      return { skipped: false };
+      return { skipped: notAList };
     }
     // Pre-list config: keep the user's enabled presets (same tiles), and say how to move on.
     const legacy = presetsRaw as Record<string, unknown>;
@@ -146,7 +151,7 @@ function parseSwitches(
       warnings.push('The MyBrew switch was removed. To heat to your own temperature, add it to the "Temperature switches" list '
         + '(e.g. name "Pour Over", temperature 200)');
     }
-    return { switches, skipped: false };
+    return { switches, skipped: notAList };
   }
 
   const out: TemperatureSwitch[] = [];
@@ -160,7 +165,7 @@ function parseSwitches(
     const name = typeof entry.name === 'string' ? entry.name.trim().replace(/\s+/g, ' ') : '';
     const where = `switch ${index + 1}${name ? ` ("${name}")` : ''}`;
     if (!SWITCH_NAME_RE.test(name)) {
-      skip(`${where}: the name must use only letters, digits and spaces`);
+      skip(`${where}: the name must be at least two characters, using only letters, digits and spaces`);
       continue;
     }
     const temperatureF = typeof entry.temperature === 'number' || typeof entry.temperature === 'string'
@@ -170,9 +175,11 @@ function parseSwitches(
       skip(`${where}: the temperature must be 104–212 °F or 40–100 °C`);
       continue;
     }
+    // Duplicates are matched more loosely than subtypes ("Greentea" vs "Green Tea"), so the skipped one may have a
+    // tile of its own: keep it like any other skipped entry's.
     const sameName = out.find((s) => switchKey(s.name) === switchKey(name));
     if (sameName) {
-      warnings.push(`${where}: "${sameName.name}" already has this name (capitals and spaces don't count); skipped`);
+      skip(`${where}: "${sameName.name}" already has this name (capitals and spaces don't count)`);
       continue;
     }
     const sw = toSwitch(name, temperatureF);

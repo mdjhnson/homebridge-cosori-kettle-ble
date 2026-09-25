@@ -33,7 +33,10 @@ interface KettleContext {
   targetF?: number;
   /** Keep-warm preference applied when heating starts. */
   keepWarm?: boolean;
-  /** Created by a version with the switch list. Such an install with no list configured gets DEFAULT_SWITCHES. */
+  /**
+   * Created by a version with the switch list (set once, when the platform creates the accessory). Such an install
+   * with no list configured gets DEFAULT_SWITCHES; an older one keeps its preset tiles.
+   */
   createdWithSwitchList?: boolean;
 }
 
@@ -53,10 +56,12 @@ export class KettleAccessory {
     private readonly config: KettlePluginConfig,
     private readonly accessory: PlatformAccessory,
     private readonly manager: ConnectionManager,
+    /** True when the platform just created this accessory, false when it was restored from the cache. */
+    created: boolean,
   ) {
     const { Service: S, Characteristic: C } = api.hap;
     this.ctx = accessory.context as KettleContext;
-    if (this.ctx.mac === undefined) {
+    if (created) {
       this.ctx.createdWithSwitchList = true;
     }
     this.ctx.mac = config.mac;
@@ -112,6 +117,8 @@ export class KettleAccessory {
           .onSet(() => {
             log.warn(`${config.name}: "${svc.displayName}" is not in the switch list; fix the skipped entries in the plugin settings`);
             setTimeout(() => svc.updateCharacteristic(C.On, false), 200);
+            // Fail the SET so an automation or Siri reports it instead of claiming success.
+            throw new api.hap.HapStatusError(api.hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
           });
       }
     } else {
@@ -121,7 +128,7 @@ export class KettleAccessory {
       }
     }
     for (const item of switches) {
-      const service = this.optionalService(true, S.Switch, item.subtype, item.name)!;
+      const service = this.ensureService(S.Switch, item.subtype, item.name);
       this.temperatureSwitches.push({ item, service });
       service.getCharacteristic(C.On)
         .onGet(() => this.read((s) => this.switchOn(item, s)))
@@ -161,12 +168,24 @@ export class KettleAccessory {
   }
 
   private displayTargetF(s: KettleStatus): number {
-    return s.active || s.scheduled ? s.setpointF : this.ctx.targetF ?? s.setpointF;
+    return s.active || s.scheduled ? this.heatingToF(s) : this.ctx.targetF ?? s.setpointF;
   }
 
-  /** On while the kettle is heating or holding at this switch's setpoint. */
+  /**
+   * The temperature the kettle is heating to. A preset mode fixes it. In MyBrew mode it is the MyBrew temperature
+   * (status byte 8, which heatTo sets with F3 first): no capture shows what the setpoint byte holds in that mode.
+   */
+  private heatingToF(s: KettleStatus): number {
+    const preset = PRESET_TEMP_F[s.mode];
+    if (preset !== undefined) {
+      return preset;
+    }
+    return s.mode === Mode.MY_BREW && s.myTempF !== undefined ? s.myTempF : s.setpointF;
+  }
+
+  /** On while the kettle is heating or holding at this switch's temperature. */
   private switchOn(item: TemperatureSwitch, s: KettleStatus): boolean {
-    return s.active && effectiveSetpointF(s.setpointF) === item.temperatureF;
+    return s.active && effectiveSetpointF(this.heatingToF(s)) === item.temperatureF;
   }
 
   private keepWarmOn(s: KettleStatus): boolean {
@@ -334,21 +353,26 @@ export class KettleAccessory {
     }
     const { Service: S } = this.api.hap;
     const kept = DEFAULT_SWITCHES.filter((item) => this.accessory.getServiceById(S.Switch, item.subtype));
-    this.log.warn(`${this.config.name}: no temperature switches configured; keeping your existing preset tiles `
+    this.log.info(`${this.config.name}: no temperature switches configured; keeping your existing preset tiles `
       + `(${kept.map((item) => item.name).join(', ') || 'none'}). Add switches under "Temperature switches" in the plugin settings.`);
     return kept;
   }
 
   /** Add (or keep) a named sub-service when enabled; remove a cached one when disabled. */
   private optionalService(enabled: boolean, type: WithUUID<typeof Service>, subtype: string, name: string): Service | undefined {
-    const existing = this.accessory.getServiceById(type, subtype);
     if (!enabled) {
+      const existing = this.accessory.getServiceById(type, subtype);
       if (existing) {
         this.accessory.removeService(existing);
       }
       return undefined;
     }
-    const svc = existing ?? this.accessory.addService(type, name, subtype);
+    return this.ensureService(type, subtype, name);
+  }
+
+  /** Add (or keep) a named sub-service. */
+  private ensureService(type: WithUUID<typeof Service>, subtype: string, name: string): Service {
+    const svc = this.accessory.getServiceById(type, subtype) ?? this.accessory.addService(type, name, subtype);
     this.applyName(svc, name);
     return svc;
   }

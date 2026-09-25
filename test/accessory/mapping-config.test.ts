@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   currentFToC, firmwareRevision, targetCToF, targetFToC, TemperatureSmoother,
 } from '../../src/accessory/mapping.js';
-import { DEFAULT_SWITCHES, parseConfig, switchSubtype, switchTemperatureF } from '../../src/config.js';
+import { DEFAULT_SWITCHES, parseConfig, SWITCH_NAME_RE, switchSubtype, switchTemperatureF } from '../../src/config.js';
 
 describe('temperature mapping', () => {
   it.each([[40, 104], [82, 180], [91, 196], [96, 205], [100, 212], [75, 167], [39, 104], [101, 212]])('%s °C → %s °F', (c, f) => {
@@ -141,33 +143,36 @@ describe('parseConfig', () => {
         { name: 'tea', temperature: 190 },
         { name: 'Green Tea', temperature: 181 },
         { temperature: 200 },
+        { name: 'A', temperature: 200 },
       ] });
       expect(config!.switches!.map((s) => s.name)).toEqual(['Tea', 'Green Tea']);
       expect(config!.switchesSkipped).toBe(true);
       const kept = '; skipped (an existing tile for it is kept until this is fixed)';
       expect(warnings).toEqual([
-        `switch 1 ("Boil (212°F)"): the name must use only letters, digits and spaces${kept}`,
+        `switch 1 ("Boil (212°F)"): the name must be at least two characters, using only letters, digits and spaces${kept}`,
         `switch 2 ("Too Hot"): the temperature must be 104–212 °F or 40–100 °C${kept}`,
         `switch 3 ("Between Units"): the temperature must be 104–212 °F or 40–100 °C${kept}`,
-        'switch 5 ("tea"): "Tea" already has this name (capitals and spaces don\'t count); skipped',
+        `switch 5 ("tea"): "Tea" already has this name (capitals and spaces don't count)${kept}`,
         'switch 6 ("Green Tea") and "Tea" both heat to 180 °F, so both will show On together',
-        `switch 7: the name must use only letters, digits and spaces${kept}`,
+        `switch 7: the name must be at least two characters, using only letters, digits and spaces${kept}`,
+        `switch 8 ("A"): the name must be at least two characters, using only letters, digits and spaces${kept}`,
       ]);
     });
 
-    it('counts names that differ only in spaces as duplicates, without marking the list incomplete', () => {
-      const { config, warnings } = parseConfig({ ...base, switches: [{ name: 'Tea 2', temperature: 170 }, { name: 'Tea2', temperature: 175 }] });
-      expect(config!.switches!.map((s) => s.name)).toEqual(['Tea 2']);
-      expect(config!.switchesSkipped).toBe(false);
-      expect(warnings).toEqual(['switch 2 ("Tea2"): "Tea 2" already has this name (capitals and spaces don\'t count); skipped']);
+    it('counts names that differ only in spaces as duplicates, and keeps the skipped one\'s tile (its subtype differs)', () => {
+      const { config, warnings } = parseConfig({ ...base, switches: [{ name: 'Green Tea', temperature: 170 }, { name: 'Greentea', temperature: 175 }] });
+      expect(config!.switches!.map((s) => s.subtype)).toEqual(['preset-greenTea']);
+      expect(config!.switchesSkipped).toBe(true);
+      expect(warnings).toEqual(['switch 2 ("Greentea"): "Green Tea" already has this name (capitals and spaces don\'t count); '
+        + 'skipped (an existing tile for it is kept until this is fixed)']);
     });
 
     it('stores the setpoint the kettle heats to, so near-preset temperatures that share a preset are flagged', () => {
-      const { config, warnings } = parseConfig({ ...base, switches: [{ name: 'A', temperature: 179 }, { name: 'B', temperature: 181 }] });
+      const { config, warnings } = parseConfig({ ...base, switches: [{ name: 'Tea A', temperature: 179 }, { name: 'Tea B', temperature: 181 }] });
       expect(config!.switches!.map((s) => s.temperatureF)).toEqual([180, 180]);
-      expect(warnings).toEqual(['switch 2 ("B") and "A" both heat to 180 °F, so both will show On together']);
+      expect(warnings).toEqual(['switch 2 ("Tea B") and "Tea A" both heat to 180 °F, so both will show On together']);
       // Two MyBrew temperatures 1 °F apart are distinct.
-      expect(parseConfig({ ...base, switches: [{ name: 'A', temperature: 200 }, { name: 'B', temperature: 201 }] }).warnings).toEqual([]);
+      expect(parseConfig({ ...base, switches: [{ name: 'Tea A', temperature: 200 }, { name: 'Tea B', temperature: 201 }] }).warnings).toEqual([]);
     });
 
     it('migrates the old preset checkboxes, keeping their tiles, and explains the MyBrew removal', () => {
@@ -180,10 +185,29 @@ describe('parseConfig', () => {
       expect(parseConfig({ ...base, accessories: { presets: {} } }).config!.switches!.map((s) => s.name)).toEqual(['Boil']);
     });
 
-    it('ignores a "switches" value that is not a list, and says so', () => {
+    it('ignores a "switches" value that is not a list, says so, and keeps the existing tiles', () => {
       const { config, warnings } = parseConfig({ ...base, switches: {}, accessories: { presets: { boil: true } } });
       expect(config!.switches!.map((s) => s.name)).toEqual(['Boil']);
-      expect(warnings[0]).toBe('"switches" must be a list; ignoring it');
+      expect(config!.switchesSkipped).toBe(true);
+      expect(warnings[0]).toBe('"switches" must be a list; ignoring it (existing switch tiles are kept until this is fixed)');
+      const noLegacy = parseConfig({ ...base, switches: { name: 'Pour Over', temperature: 200 } }).config!;
+      expect(noLegacy.switches).toBeUndefined();
+      expect(noLegacy.switchesSkipped).toBe(true);
+      // null is the same as no list.
+      expect(parseConfig({ ...base, switches: null })).toMatchObject({ warnings: [], config: { switchesSkipped: false } });
+    });
+
+    it('the settings form accepts every name the plugin accepts, and rejects ASCII punctuation', () => {
+      const schema = JSON.parse(readFileSync(new URL('../../config.schema.json', import.meta.url), 'utf8'));
+      const pattern = new RegExp(schema.schema.properties.switches.items.properties.name.pattern, 'u');
+      for (const name of ['Boil', 'Pour Over 200', 'Čaj', 'Чай', 'Őrlés', '緑茶 2', 'Té Verde', '  Tea  ', 'Tea  Two']) {
+        expect(SWITCH_NAME_RE.test(name.trim().replace(/\s+/g, ' ')), name).toBe(true);
+        expect(pattern.test(name), name).toBe(true);
+      }
+      for (const name of ['A', 'Boil!', 'Boil (212)', 'Tea/Coffee', ' ', '']) {
+        expect(SWITCH_NAME_RE.test(name.trim()), name).toBe(false);
+        expect(pattern.test(name), name).toBe(false);
+      }
     });
 
     it('prefers the new list over the old checkboxes', () => {

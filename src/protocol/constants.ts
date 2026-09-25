@@ -5,6 +5,7 @@
  * Values here were cross-checked against real captured packets, not only the upstream docs
  * (which contain known errors — see README "Protocol notes").
  */
+import { clamp, cToF } from '../util/temperature.js';
 
 export const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
 /** Notifications from the kettle. */
@@ -157,6 +158,11 @@ export const Completion = {
 /** Setpoint range accepted by the kettle (°F). */
 export const MIN_SETPOINT_F = 104;
 export const MAX_SETPOINT_F = 212;
+
+/** A temperature in °C as the kettle's integer °F setpoint, clamped to the accepted range. */
+export function setpointFromC(c: number): number {
+  return clamp(Math.round(cToF(c)), MIN_SETPOINT_F, MAX_SETPOINT_F);
+}
 
 /** Temperature readings outside this range are treated as invalid (°F). */
 export const MIN_VALID_READING_F = 40;

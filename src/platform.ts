@@ -60,6 +60,7 @@ export class CosoriKettlePlatform implements DynamicPlatformPlugin {
 
     const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${config.mac}`);
     let accessory = this.cached.get(uuid);
+    const created = !accessory;
     if (accessory) {
       this.log.debug(`Restoring ${accessory.displayName} from cache`);
     } else {
@@ -87,7 +88,7 @@ export class CosoriKettlePlatform implements DynamicPlatformPlugin {
       idleDisconnectMs: config.idleDisconnectSeconds * 1000,
       log: this.log,
     });
-    new KettleAccessory(this.api, this.log, config, accessory, this.manager);
+    new KettleAccessory(this.api, this.log, config, accessory, this.manager, created);
     this.api.updatePlatformAccessories([accessory]);
 
     this.log.info(`${config.name}: ${config.connectionMode === 'persistent' ? 'staying connected' : 'connecting on demand'} `

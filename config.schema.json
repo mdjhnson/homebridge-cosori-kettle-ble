@@ -112,8 +112,8 @@
               "title": "Name",
               "type": "string",
               "required": true,
-              "pattern": "^\\s*[A-Za-z0-9À-ÖØ-öø-ÿ]([A-Za-z0-9À-ÖØ-öø-ÿ ]*[A-Za-z0-9À-ÖØ-öø-ÿ])?\\s*$",
-              "description": "Letters, digits and spaces only."
+              "pattern": "^\\s*[^\\s!-/:-@\\[-`{-~][^!-/:-@\\[-`{-~]*[^\\s!-/:-@\\[-`{-~]\\s*$",
+              "description": "Letters, digits and spaces only, at least two characters."
             },
             "temperature": {
               "title": "Temperature",

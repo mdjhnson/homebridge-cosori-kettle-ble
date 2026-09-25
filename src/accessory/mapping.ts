@@ -4,8 +4,8 @@
  *
  * HomeKit always works in °C internally; the kettle always works in °F.
  */
-import { MAX_SETPOINT_F, MIN_SETPOINT_F } from '../protocol/constants.js';
-import { clamp, cToF, fToC, round1 } from '../util/temperature.js';
+import { setpointFromC } from '../protocol/constants.js';
+import { clamp, fToC, round1 } from '../util/temperature.js';
 
 /** HomeKit TargetTemperature range for the kettle (°C). 40–100 °C = 104–212 °F. */
 export const TARGET_MIN_C = 40;
@@ -14,7 +14,7 @@ export const TARGET_STEP_C = 0.5;
 
 /** Convert a HomeKit target (°C) to the kettle's integer °F setpoint, clamped to 104–212. */
 export function targetCToF(c: number): number {
-  return clamp(Math.round(cToF(c)), MIN_SETPOINT_F, MAX_SETPOINT_F);
+  return setpointFromC(c);
 }
 
 /** Convert a kettle °F setpoint to a HomeKit target (°C), snapped to the 0.5 °C step and clamped to range. */

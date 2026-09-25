@@ -70,7 +70,7 @@ Config, rendered as an add/remove list in the Homebridge UI:
 ]
 ```
 
-- **Fields:** `name` (required; letters, digits and spaces only, because HAP rejects other names) and `temperature` in `temperatureUnit` (F: 104–212, C: 40–100). Keep-warm stays global: the one Keep Warm switch and `keepWarmMinutes` apply to every switch.
+- **Fields:** `name` (required; letters, digits and spaces only, at least two characters, because HAP rejects other names) and `temperature` in `temperatureUnit` (F: 104–212, C: 40–100). Keep-warm stays global: the one Keep Warm switch and `keepWarmMinutes` apply to every switch.
 - **Default:** the four kettle presets above, so a new install gets sensible shortcuts. A user who wants a minimal Home app deletes them.
 - **On:** heats to that temperature. If it matches a kettle preset (within 1 °F, so Celsius values like 91 °C → Oolong work), the plugin sends that preset (F0). Otherwise it stores the temperature as MyBrew and heats in MyBrew mode (F3, then F0 mode 5), which is what the thermostat dial already does for non-preset temperatures.
 - **Shows On** while the kettle is heating or holding at that item's temperature (setpoint within 1 °F). **Off** stops the kettle. Two items with the same temperature would both show On, so validation warns about duplicates.
