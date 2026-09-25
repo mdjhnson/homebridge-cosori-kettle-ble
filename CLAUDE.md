@@ -13,7 +13,7 @@ Homebridge dynamic-platform plugin (TypeScript, ESM) that controls a **Cosori Sm
 ```sh
 npm run lint        # eslint, --max-warnings=0
 npm run typecheck   # tsc over src + test
-npm test            # vitest (≈300 tests, no hardware)
+npm test            # vitest (≈310 tests, no hardware)
 npm run build       # tsc -p tsconfig.build.json → dist/
 npm pack            # tarball for installing into the Homebridge container
 node dist/cli/probe.js help   # cosori-probe diagnostic CLI
@@ -50,4 +50,7 @@ Before every commit, run lint, typecheck, test and build, and **gate the commit 
 - In zsh on the Mac, `USERNAME` is a special variable. Never use it as a scratch variable (it caused an invalid child-bridge ID once).
 - Foreground `sleep` in tool calls is blocked. Wait with `until …; do sleep N; done` or a background command.
 - To time-limit the probe, run `timeout` **inside** the container (`docker exec homebridge timeout -s INT 60 cosori-probe …`). Killing `docker exec` from outside leaves the probe connected.
+- Don't stream the Homebridge log with `docker exec … tail -F` as a background monitor. It delivered nothing, and when the monitor expired the `tail` kept running inside the container. Poll instead (e.g. `hcitool con` for the link, or grep the log on demand).
+- The Pi's Bluetooth is a USB adapter (the onboard radio is disabled); the plugin selects it by MAC. For HCI-level evidence, run btmon inside the container (see `docs/local/argonpi.md`). A capture that spans a connect contains the hello frames, so it contains the key: never print or copy those frames.
+- `sudo` on the Pi needs the user's password. Hand those commands to the user as one `&&`-chained block.
 - `docker exec … cosori-probe` works because the image puts `/homebridge/node_modules/.bin` on PATH. The plugin's dependencies install nested under `node_modules/homebridge-cosori-kettle-ble/node_modules`.

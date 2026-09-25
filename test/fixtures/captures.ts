@@ -266,4 +266,17 @@ export const OWN_KETTLE_FRAMES = {
   extendedScheduled290: 'a5 12 05 1d 00 75 01 40 40 00 05 01 b4 69 8c 01 08 07 08 07 00 00 00 2c 01 22 01 00 00 01 08 07 00 01 01',
   /** Poll after cancel: idle, [17–18] keeps the last delay (300 s), [19–20] = 0. */
   extendedAfterCancel: 'a5 12 07 1d 00 bb 01 40 40 00 00 00 b4 69 8c 00 00 00 00 00 00 00 00 2c 01 00 00 00 00 01 08 07 00 01 01',
+  /**
+   * 2026-09-24, btmon on the Pi's USB adapter: Green Tea started with the kettle's own button (the
+   * kettle applied a 30 min hold by itself), plugin connected throughout.
+   * Compact while heating at 95 °F: [8] = 01 while the hold is armed, like extended [9].
+   */
+  compactHeatingGreen95: 'a5 22 a9 0c 00 eb 01 41 40 00 01 01 b4 5f 01 00 00 00',
+  /** Plugin poll while heating at 98 °F: stage 1, green tea, hold 1800/1800 not yet started, [17–18] = last delay 300 s. */
+  extendedHeatingHold30: 'a5 12 9b 1d 00 0d 01 40 40 00 01 01 b4 62 8c 01 08 07 08 07 00 00 00 2c 01 00 00 00 00 01 08 07 00 01 01',
+  compactHeating132: 'a5 22 ce 0c 00 a1 01 41 40 00 01 01 b4 84 01 00 00 00',
+  /** Pushed on reaching 180 °F: completion 20 = heating done (then the 30 min hold ran). */
+  completionHeatingDone: 'a5 22 fe 05 00 7a 01 f7 a3 00 20',
+  /** After the hold finished (the plugin logged completion 21): idle, mode 0, 181 °F, [8] back to 00. */
+  compactIdleAfterHold: 'a5 22 18 0c 00 29 01 41 40 00 00 00 b4 b5 00 00 00 00',
 };

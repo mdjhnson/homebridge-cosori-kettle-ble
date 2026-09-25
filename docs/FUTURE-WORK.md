@@ -96,7 +96,8 @@ Rejected: noble variants (native HCI sockets, bypass BlueZ, need container privi
 ## 4. Protocol unknowns worth resolving (need captures)
 
 - Extended status `[23]` and `[27]`: one of them is probably the app's "Hold Temp: On" flag. Toggle Hold in the app while capturing.
-- Compact status `[8]` and `[9]`: `[9] = 01` on lift-off (possibly an off-base flag, so HomeKit could react instantly), and `[8] = 01` while scheduled.
+- Compact status `[9]`: `= 01` on lift-off, possibly an off-base flag, so HomeKit could react instantly. (`[8]` is now understood: `01` while a hold or schedule is armed, matching extended `[9]`; O capture 2026-09-24.)
+- Starting a preset from the kettle's own button armed a 30 min hold with no command sent. Confirm it comes from the app's saved hold (extended `[23]`/`[24–25]`) by changing the hold in the app, then pressing the button while the plugin watches.
 - Is the host-sent `A5 12 … 41 40 00` "CTRL" frame from barrymichels' V0 code needed on V0 firmware? (There's no V0 kettle to test on.)
 - Baby formula (F5) is not exposed. It could become an option.
 - Maximum delayed-start delay (docs say 12 h; the app's picker range is unverified).

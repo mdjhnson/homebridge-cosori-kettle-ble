@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { decodeMessage, fromHex, parseCompactStatus, parseExtendedStatus, parseFrame } from '../../src/protocol/index.js';
-import { ACK_FRAMES, COMPACT_FRAMES, COMPLETION_FRAMES, EXTENDED_FRAMES } from '../fixtures/captures.js';
+import { ACK_FRAMES, COMPACT_FRAMES, COMPLETION_FRAMES, EXTENDED_FRAMES, OWN_KETTLE_FRAMES } from '../fixtures/captures.js';
 
 function decode(hex: string) {
   const frame = parseFrame(fromHex(hex));
@@ -79,5 +79,34 @@ describe('acks', () => {
     const { frame, message } = decode(fx.hex);
     expect(frame.seq).toBe(fx.seq);
     expect(message).toEqual({ kind: 'ack', command: fx.command, status: fx.status });
+  });
+});
+
+describe('own kettle: heat-and-hold cycle started from the kettle (2026-09-24)', () => {
+  it('decodes compact status while heating and after the hold', () => {
+    expect(decode(OWN_KETTLE_FRAMES.compactHeatingGreen95).message)
+      .toEqual({ kind: 'compact', stage: 1, mode: 1, setpointF: 180, tempF: 95 });
+    expect(decode(OWN_KETTLE_FRAMES.compactHeating132).message)
+      .toEqual({ kind: 'compact', stage: 1, mode: 1, setpointF: 180, tempF: 132 });
+    expect(decode(OWN_KETTLE_FRAMES.compactIdleAfterHold).message)
+      .toEqual({ kind: 'compact', stage: 0, mode: 0, setpointF: 180, tempF: 181 });
+  });
+
+  it('flags the armed hold in compact [8] and extended [9]', () => {
+    expect(parseFrame(fromHex(OWN_KETTLE_FRAMES.compactHeatingGreen95))!.payload[8]).toBe(1);
+    expect(parseFrame(fromHex(OWN_KETTLE_FRAMES.extendedHeatingHold30))!.payload[9]).toBe(1);
+    expect(parseFrame(fromHex(OWN_KETTLE_FRAMES.compactIdleAfterHold))!.payload[8]).toBe(0);
+  });
+
+  it('decodes extended status while heating with a 30 min hold pending', () => {
+    expect(decode(OWN_KETTLE_FRAMES.extendedHeatingHold30).message).toEqual({
+      kind: 'extended', stage: 1, mode: 1, setpointF: 180, tempF: 98, myTempF: 140,
+      configuredHoldSeconds: 1800, remainingHoldSeconds: 1800, onBase: true, babyFormula: false,
+      delaySetSeconds: 300, delayRemainingSeconds: 0,
+    });
+  });
+
+  it('decodes the heating-done completion', () => {
+    expect(decode(OWN_KETTLE_FRAMES.completionHeatingDone).message).toEqual({ kind: 'completion', code: 0x20 });
   });
 });

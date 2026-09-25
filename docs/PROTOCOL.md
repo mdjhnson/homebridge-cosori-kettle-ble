@@ -2,7 +2,7 @@
 
 Every fact below is backed by a real frame in `test/fixtures/captures.ts`:
 - **U:** upstream captures from barrymichels/CosoriKettleBLE and rygwdn/ha-cosori-kettle.
-- **O:** the maintainer's kettle (HW `1.0.00`, SW `R0007V0012`). These come from VeSync-app PacketLogger captures or from frames the plugin sent itself.
+- **O:** the maintainer's kettle (HW `1.0.00`, SW `R0007V0012`). These come from VeSync-app PacketLogger captures, from frames the plugin sent itself, or from btmon captures on the Pi while the plugin was connected.
 
 Anything unverified is marked ❓.
 
@@ -61,7 +61,7 @@ Tapping presets in the app sends nothing; the app only sends F0 or F1 when you p
 | 6 | setpoint °F | U, O |
 | 7 | current temperature °F (40–230 valid) | U, O |
 | 8 | MyBrew temperature °F | U, O (140 = the app's MyBrew button) |
-| 9 | `01` while a hold or schedule is armed ❓ | U, O |
+| 9 | `01` while a hold or schedule is armed (scheduled; heating with a hold pending) | U, O |
 | 10–11 | configured hold, s LE | U, O |
 | 12–13 | remaining hold, s LE | U |
 | 14 | on-base: `00` on, `01` off | U, O (lift test) |
@@ -72,9 +72,11 @@ Tapping presets in the app sends nothing; the app only sends F0 or F1 when you p
 | 26 | baby formula | U |
 | 28 | always `01` | U, O |
 
-**Compact status** (type 0x22, 12-byte payload `01 41 40 00 st md sp t ?? ?? …`) is pushed by the kettle on its own whenever the state or the temperature reading changes, including ±1 °F sensor flicker while idle. It carries no on-base byte, although `[9] = 01` showed up on lift-off (❓ possibly an off-base flag), and `[8] = 01` while scheduled.
+**Compact status** (type 0x22, 12-byte payload `01 41 40 00 st md sp t ?? ?? …`) is pushed by the kettle on its own whenever the state or the temperature reading changes, including ±1 °F sensor flicker while idle. It carries no on-base byte, although `[9] = 01` showed up on lift-off (❓ possibly an off-base flag), and `[8] = 01` while a hold or schedule is armed (seen while scheduled, and while heating with a 30 min hold pending; back to `00` once the hold finished), matching extended `[9]`.
 
-**Completion** (type 0x22): `01 F7 A3 00 20` = heating done, `… 21` = hold done (U).
+**Completion** (type 0x22): `01 F7 A3 00 20` = heating done, `… 21` = hold done (U; O: `20` captured on reaching the setpoint, `21` seen as the plugin's "keep-warm complete" log line at the end of the hold).
+
+**Heating started from the kettle's own buttons** is reported like any other: compact pushes while heating, completion `20`, stage 3 while holding (seen live; that frame wasn't kept), completion `21`, then idle with mode `00` (O, Green Tea button). On O the button press armed a 30 min hold with no command from the app or plugin, apparently from the hold saved by the app (extended `[23]`/`[24–25]`) ❓.
 
 ## Corrections to upstream
 

@@ -2,7 +2,7 @@
 
 Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — normally used with the VeSync app) from Apple HomeKit via [Homebridge](https://homebridge.io), talking to the kettle directly over Bluetooth LE.
 
-> **Status: pre-release.** The protocol library and the `cosori-probe` CLI have been validated on a real kettle (HW 1.0.00 / SW R0007V0012). The HomeKit layer is implemented and tested against a simulated kettle; HomeKit testing on real hardware is in progress. Not published to npm.
+> **Status: pre-release.** The protocol library and the `cosori-probe` CLI have been validated on a real kettle (HW 1.0.00 / SW R0007V0012). The HomeKit layer is tested against a simulated kettle and runs daily on the maintainer's Raspberry Pi 4; the remaining real-hardware HomeKit checks are in progress. Not published to npm.
 
 - BLE via [node-ble](https://github.com/chrvadala/node-ble) (BlueZ over D-Bus): **no privileged container, no capabilities, no `/dev` passthrough, no native modules**.
 - Works in the official `homebridge/homebridge` Docker image with host networking and the host D-Bus socket mounted.
@@ -305,7 +305,7 @@ Commands that change kettle state require `--yes`, and every such command prints
 
 The kettle accepts **only one BLE connection at a time**. While the plugin or probe is connected, the VeSync app cannot connect, and vice versa. While another client is connected, the kettle also stops advertising, so `scan` won't show it. Fully close the VeSync app (force-quit it) before running the probe.
 
-The plugin will offer an **on-demand** connection mode that connects briefly for each command or slow poll and then disconnects, leaving room for the app.
+If you still want to use the VeSync app, set `connectionMode` to `onDemand`: the plugin then connects briefly for each command or slow poll and disconnects, leaving room for the app. Commands are slower, because each one has to connect first (see [Configuration](#configuration)).
 
 ## Troubleshooting
 
