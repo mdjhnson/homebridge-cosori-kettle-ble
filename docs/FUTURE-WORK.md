@@ -160,6 +160,8 @@ Rejected: noble variants (native HCI sockets, bypass BlueZ, need container privi
 
 ## 5. Release: publish to npm, built by GitHub Actions (maintainer's goal, 2026-09-25)
 
+**Built 2026-09-25: see `docs/RELEASING.md`.** It differs from the plan below in three ways. (1) The workflow **stages** each version with `npm stage publish`, and it goes live only after the maintainer approves it with 2FA: npm's default for trusted publishers created after 2026-09-03. (2) The first version is published by hand, because npm attaches a trusted publisher only to a package that already exists. (3) npm may also point `latest` at that first version, so "`latest` stays empty" below may not hold. That's harmless while every version is a beta.
+
 **Goal:** stop hand-deploying tarballs. Publish `homebridge-cosori-kettle-ble` to npm from a GitHub Actions workflow, so installs and updates go through the Homebridge UI like any other plugin. Both `homebridge-cosori-kettle-ble` and `homebridge-cosori-kettle` were unclaimed on npm on 2026-09-25.
 
 **Too early?** Not for the pipeline. Setting it up now makes every future deploy a tagged, CI-built, reproducible release instead of a tarball built on the Mac. Publishing is what signals "ready for others", and that can stay gated:
