@@ -172,8 +172,9 @@ export class KettleAccessory {
   }
 
   /**
-   * The temperature the kettle is heating to. A preset mode fixes it. In MyBrew mode it is the MyBrew temperature
-   * (status byte 8, which heatTo sets with F3 first): no capture shows what the setpoint byte holds in that mode.
+   * The temperature the kettle is heating to. A preset mode fixes it: an F3 during a preset heat already changes
+   * byte 6 before the mode follows. In MyBrew mode, bytes 6 and 8 both hold the MyBrew temperature (captured
+   * 2026-09-25); compact statuses have no byte 8.
    */
   private heatingToF(s: KettleStatus): number {
     const preset = PRESET_TEMP_F[s.mode];

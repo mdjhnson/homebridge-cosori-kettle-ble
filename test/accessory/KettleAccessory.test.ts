@@ -237,17 +237,23 @@ describe('KettleAccessory reads', () => {
     expect(await sub(S.Switch, 'preset-coffee')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
   });
 
-  it('shows a custom switch On while the kettle heats in MyBrew mode to its temperature', async () => {
-    const myBrew = Buffer.from(HEATING);
-    myBrew[5] = Mode.MY_BREW;
-    myBrew[6] = 180; // not captured in this mode: the MyBrew temperature (byte 8) decides, not the setpoint byte
-    myBrew[8] = 200;
-    const { sub, thermostat } = await setup({
-      status: myBrew, overrides: { switches: [{ name: 'Pour Over', temperature: 200 }, { name: 'Green Tea', temperature: 180 }] },
-    });
-    expect(await sub(S.Switch, 'preset-pourOver')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
-    expect(await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
-    expect(await thermostat().getCharacteristic(C.TargetTemperature).handleGetRequest()).toBe(93.5); // 200 °F
+  it('shows a custom switch On while the kettle heats and holds in MyBrew mode at its temperature (captured)', async () => {
+    const switches = [{ name: 'Tea 188', temperature: 188 }, { name: 'Green Tea', temperature: 180 }];
+    for (const hex of [OWN_KETTLE_FRAMES.extendedMyBrewHeating188, OWN_KETTLE_FRAMES.extendedMyBrewHolding188]) {
+      const { sub, thermostat } = await setup({ status: payload(hex), overrides: { switches } });
+      expect(await sub(S.Switch, 'preset-tea188')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+      expect(await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
+      expect(await thermostat().getCharacteristic(C.TargetTemperature).handleGetRequest()).toBe(86.5); // 188 °F
+    }
+  });
+
+  it('follows the mode, not byte 6, while an F3 lands during a preset heat', async () => {
+    // compactF3DuringGreenTea: mode 1 (green tea) still heating, byte 6 already 193.
+    const status = Buffer.from(payload(OWN_KETTLE_FRAMES.extendedHeatingHold30));
+    status[6] = payload(OWN_KETTLE_FRAMES.compactF3DuringGreenTea)[6]!;
+    const { sub } = await setup({ status, overrides: { switches: [{ name: 'Green Tea', temperature: 180 }, { name: 'Tea 193', temperature: 193 }] } });
+    expect(await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleGetRequest()).toBe(true);
+    expect(await sub(S.Switch, 'preset-tea193')!.getCharacteristic(C.On).handleGetRequest()).toBe(false);
   });
 
   it('answers No Response before any status arrives', async () => {

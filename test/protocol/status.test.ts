@@ -110,3 +110,22 @@ describe('own kettle: heat-and-hold cycle started from the kettle (2026-09-24)',
     expect(decode(OWN_KETTLE_FRAMES.completionHeatingDone).message).toEqual({ kind: 'completion', code: 0x20 });
   });
 });
+
+describe('own kettle: heating in MyBrew mode from the HomeKit dial (2026-09-25)', () => {
+  it('reports the MyBrew temperature in both byte 6 (setpoint) and byte 8, while heating and holding', () => {
+    expect(decode(OWN_KETTLE_FRAMES.compactMyBrewHeating188).message)
+      .toEqual({ kind: 'compact', stage: 1, mode: 5, setpointF: 188, tempF: 139 });
+    expect(decode(OWN_KETTLE_FRAMES.extendedMyBrewHeating188).message).toMatchObject({
+      kind: 'extended', stage: 1, mode: 5, setpointF: 188, myTempF: 188, configuredHoldSeconds: 1800, remainingHoldSeconds: 1800,
+    });
+    expect(decode(OWN_KETTLE_FRAMES.completionMyBrewDone).message).toEqual({ kind: 'completion', code: 0x20 });
+    expect(decode(OWN_KETTLE_FRAMES.extendedMyBrewHolding188).message).toMatchObject({
+      kind: 'extended', stage: 3, mode: 5, setpointF: 188, tempF: 188, myTempF: 188, configuredHoldSeconds: 1800, remainingHoldSeconds: 1780,
+    });
+  });
+
+  it('shows an F3 MyBrew temperature in byte 6 at once, even while a preset mode is still heating', () => {
+    expect(decode(OWN_KETTLE_FRAMES.compactF3DuringGreenTea).message)
+      .toEqual({ kind: 'compact', stage: 1, mode: 1, setpointF: 193, tempF: 139 });
+  });
+});

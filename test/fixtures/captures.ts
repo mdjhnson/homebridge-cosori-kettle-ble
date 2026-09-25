@@ -279,4 +279,18 @@ export const OWN_KETTLE_FRAMES = {
   completionHeatingDone: 'a5 22 fe 05 00 7a 01 f7 a3 00 20',
   /** After the hold finished (the plugin logged completion 21): idle, mode 0, 181 °F, [8] back to 00. */
   compactIdleAfterHold: 'a5 22 18 0c 00 29 01 41 40 00 00 00 b4 b5 00 00 00 00',
+  /**
+   * 2026-09-25, btmon on the Pi: the HomeKit dial set to 180, then 193, then 188 °F within 4 s (the plugin sent
+   * F0 green tea, then F3 + F0 MyBrew twice), with a 30 min hold. Right after F3 193, still in green tea mode:
+   * byte 6 already shows the new MyBrew temperature, before the F0 switches the mode.
+   */
+  compactF3DuringGreenTea: 'a5 22 e7 0c 00 74 01 41 40 00 01 01 c1 8b 01 00 00 00',
+  /** Heating in MyBrew mode (5) to 188 °F: compact byte 6 = 188. */
+  compactMyBrewHeating188: 'a5 22 e9 0c 00 73 01 41 40 00 01 05 bc 8b 01 00 00 00',
+  /** Extended while heating in MyBrew mode: byte 6 (setpoint) and byte 8 (MyBrew) both 188, hold 1800/1800 pending. */
+  extendedMyBrewHeating188: 'a5 12 2a 1d 00 37 01 40 40 00 01 05 bc 8b bc 01 08 07 08 07 00 00 00 08 07 00 00 00 00 01 08 07 00 01 01',
+  /** Pushed on reaching 188 °F. */
+  completionMyBrewDone: 'a5 22 1a 05 00 5e 01 f7 a3 00 20',
+  /** Holding at 188 °F in MyBrew mode: stage 3, remaining hold 1780 s of 1800. */
+  extendedMyBrewHolding188: 'a5 12 43 1d 00 00 01 40 40 00 03 05 bc bc bc 01 08 07 f4 06 00 00 00 08 07 00 00 00 00 01 08 07 00 01 01',
 };
