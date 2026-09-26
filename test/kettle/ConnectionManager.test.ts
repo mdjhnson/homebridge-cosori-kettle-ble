@@ -170,6 +170,195 @@ describe('ConnectionManager (persistent)', () => {
   });
 });
 
+describe('ConnectionManager commands across a dropped link', () => {
+  const commandsSent = (fake: FakeTransport, cmd: number) => fake.sent.filter((f) => f.payload[1] === cmd).length;
+
+  /** A kettle that drops the link instead of answering the first `n` STOPs. */
+  function dropsOnStop(n: number): Responder {
+    let left = n;
+    const base = kettle();
+    return (frame, fake) => {
+      if (frame.payload[1] === Cmd.STOP && left > 0) {
+        left--;
+        fake.drop();
+        return;
+      }
+      base(frame, fake);
+    };
+  }
+
+  it('sends a command again after the reconnect when the link dropped under it', async () => {
+    const log = captureLog();
+    const { fake, manager } = setup(dropsOnStop(1), { log });
+    manager.start();
+    await until(() => manager.connected);
+    await manager.run('stop', (c) => c.stop());
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+    expect(fake.connectCount).toBe(2);
+    expect(log.lines).toContainEqual({ level: 'info', message: 'Sending "stop" again: the link dropped before the kettle confirmed it' });
+  });
+
+  it('waits for a new link when the kettle went silent before the drop was noticed', async () => {
+    // The kettle goes silent (polls too): both sends time out (KettleClient retries once) while the
+    // link still looks up, and BlueZ only ends it later.
+    let silent = false;
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (silent && frame.payload[1] !== Cmd.HELLO) {
+        return;
+      }
+      base(frame, f);
+    });
+    manager.start();
+    await until(() => manager.connected);
+    silent = true;
+    const p = manager.run('stop', (c) => c.stop());
+    await until(() => commandsSent(fake, Cmd.STOP) === 2);
+    await new Promise((r) => setTimeout(r, 80)); // second ACK timeout (50 ms) has passed
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2); // no third send on the same link
+    silent = false;
+    fake.drop();
+    await p;
+    expect(commandsSent(fake, Cmd.STOP)).toBe(3);
+    expect(fake.connectCount).toBe(2);
+  });
+
+  it('treats a failed write as a dying link: sent again once BlueZ ends it and the kettle is back', async () => {
+    const log = captureLog();
+    let silent = false;
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (silent && frame.payload[1] !== Cmd.HELLO) {
+        return;
+      }
+      base(frame, f);
+    }, { log });
+    manager.start();
+    await until(() => manager.connected);
+    silent = true; // a dying link: nothing gets through, and the write times out
+    fake.nextWriteError = new Error('GATT write timed out after 5000 ms');
+    const p = manager.run('stop', (c) => c.stop());
+    await until(() => log.lines.some((l) => /write to the kettle failed: GATT write timed out/.test(l.message)));
+    silent = false;
+    fake.drop();
+    await p;
+    expect(commandsSent(fake, Cmd.STOP)).toBe(1); // the failed write never reached the kettle
+    expect(fake.connectCount).toBe(2);
+  });
+
+  it('fails queued commands at once when the plugin stops', async () => {
+    const { fake, manager } = setup(kettle(), { commandTimeoutMs: 5_000 });
+    fake.connectError = new Error('not found');
+    manager.start();
+    const results = Promise.allSettled([manager.run('a', (c) => c.stop()), manager.run('b', (c) => c.stop())]);
+    await new Promise((r) => setTimeout(r, 20));
+    const started = Date.now();
+    await manager.stop();
+    const settled = await results;
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(settled.map((r) => (r.status === 'rejected' ? (r.reason as Error).message : 'ok'))).toEqual(['plugin is shutting down', 'plugin is shutting down']);
+  });
+
+  it('reports the missing ACK at once when the kettle still answers on the same link', async () => {
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] !== Cmd.STOP) {
+        base(frame, f);
+      }
+    }, { resendWindowMs: 5_000 });
+    manager.start();
+    await until(() => manager.connected);
+    const started = Date.now();
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/no response from kettle/);
+    expect(Date.now() - started).toBeLessThan(1_000); // not the 5 s resend window
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+    expect(fake.connectCount).toBe(1);
+  });
+
+  it('keeps the BlueZ error as the cause when a write fails because the link is gone', async () => {
+    const { fake, client } = setup(kettle());
+    await client.connect();
+    const err = await (async () => {
+      fake.write = async () => {
+        fake.connected = false;
+        throw new Error('org.bluez.Error.Failed: Not connected');
+      };
+      return client.stop().catch((e: unknown) => e);
+    })();
+    expect(err).toMatchObject({ name: 'NotConnectedError', message: 'kettle is not connected (org.bluez.Error.Failed: Not connected)' });
+    expect((err as Error).cause).toBeInstanceOf(Error);
+  });
+
+  it('sends it only once more', async () => {
+    const { fake, manager } = setup(dropsOnStop(2));
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/not connected/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+  });
+
+  it('gives up when the kettle does not reconnect within the resend window', async () => {
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.STOP) {
+        f.connectError = new Error('not found');
+        f.drop();
+        return;
+      }
+      kettle()(frame, f);
+    }, { resendWindowMs: 100 });
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/^stop: kettle lost the link and did not reconnect/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(1);
+  });
+
+  it('does not resend a command the kettle refused', async () => {
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.STOP) {
+        f.ack(frame, [0x01]);
+        return;
+      }
+      base(frame, f);
+    });
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/rejected command/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(1);
+  });
+
+  it('keeps the issue order: a later command waits behind the resend', async () => {
+    let dropped = false;
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.SET_MODE && !dropped) {
+        dropped = true;
+        f.drop();
+        return;
+      }
+      base(frame, f);
+    });
+    manager.start();
+    await until(() => manager.connected);
+    // A custom temperature is two writes (F3, then F0); the Stop must not land between them.
+    const heat = manager.run('heat to 188°F', (c) => c.heatTo(188));
+    const stop = manager.run('stop', (c) => c.stop());
+    await Promise.all([heat, stop]);
+    const order = fake.sent.map((f) => f.payload[1]).filter((c) => c === Cmd.SET_MY_TEMP || c === Cmd.SET_MODE || c === Cmd.STOP);
+    expect(order).toEqual([Cmd.SET_MY_TEMP, Cmd.SET_MODE, Cmd.SET_MY_TEMP, Cmd.SET_MODE, Cmd.STOP]);
+  });
+
+  it('gives a queued command its own timeout, counted from when it was issued', async () => {
+    const { fake, manager } = setup(kettle(), { commandTimeoutMs: 100 });
+    fake.connectError = new Error('not found');
+    manager.start();
+    const started = Date.now();
+    const results = await Promise.allSettled([manager.run('a', (c) => c.stop()), manager.run('b', (c) => c.stop())]);
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(Date.now() - started).toBeLessThan(180);
+  });
+});
+
 describe('ConnectionManager (onDemand)', () => {
   it('does not connect until the first poll is due or a command arrives', async () => {
     const { fake, manager } = setup(kettle(), { mode: 'onDemand' });

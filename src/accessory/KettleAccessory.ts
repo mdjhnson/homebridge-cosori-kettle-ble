@@ -46,6 +46,12 @@ export class KettleAccessory {
   private readonly keepWarm?: Service;
   private readonly temperatureSwitches: { item: TemperatureSwitch; service: Service }[] = [];
   private readonly smoother = new TemperatureSmoother();
+  /**
+   * Heats sent but not yet settled (id → target °F). They aren't in the status yet, e.g. while one
+   * waits for the link or to be resent after a drop, so Stop and target changes check them too.
+   */
+  private readonly pendingHeats = new Map<number, number>();
+  private nextHeatId = 0;
   private readonly ctx: KettleContext;
   private infoUpdated = false;
 
@@ -219,9 +225,9 @@ export class KettleAccessory {
     if (on) {
       this.assertOnBase();
       const targetF = this.ctx.targetF ?? this.manager.status?.setpointF ?? PRESET_TEMP_F[Mode.BOIL]!;
-      this.exec(`heat to ${targetF}°F`, (c) => c.heatTo(targetF, this.holdSeconds()));
+      this.exec(`heat to ${targetF}°F`, (c) => c.heatTo(targetF, this.holdSeconds()), undefined, targetF);
     } else {
-      this.exec('stop', (c) => c.stop(), () => !!(this.manager.status?.active || this.manager.status?.scheduled));
+      this.exec('stop', (c) => c.stop(), () => !!(this.manager.status?.active || this.manager.status?.scheduled) || this.heatPending());
     }
   }
 
@@ -230,9 +236,9 @@ export class KettleAccessory {
     this.ctx.targetF = targetF;
     this.api.updatePlatformAccessories([this.accessory]);
     const s = this.manager.status;
-    if (s?.active) {
+    if (s?.active || this.heatPending()) {
       this.assertCanCommand();
-      this.exec(`change target to ${targetF}°F`, (client) => client.heatTo(targetF, this.holdSeconds()));
+      this.exec(`change target to ${targetF}°F`, (client) => client.heatTo(targetF, this.holdSeconds()), undefined, targetF);
     } else {
       this.log.debug(`${this.config.name}: target set to ${targetF}°F (applies when heating starts)`);
     }
@@ -241,41 +247,58 @@ export class KettleAccessory {
   private setSwitch(item: TemperatureSwitch, on: boolean): void {
     this.assertCanCommand();
     if (!on) {
-      this.exec(`stop ${item.name}`, (c) => c.stop(), () => !!this.manager.status && this.switchOn(item, this.manager.status));
+      const on = () => (!!this.manager.status && this.switchOn(item, this.manager.status)) || this.heatPending(item.temperatureF);
+      this.exec(`stop ${item.name}`, (c) => c.stop(), on);
       return;
     }
     this.assertOnBase();
     this.ctx.targetF = item.temperatureF;
     this.api.updatePlatformAccessories([this.accessory]);
     // heatTo uses the kettle's preset when the temperature is one (±1 °F), otherwise MyBrew.
-    this.exec(`${item.name} (${item.temperatureF}°F)`, (c) => c.heatTo(item.temperatureF, this.holdSeconds()));
+    this.exec(`${item.name} (${item.temperatureF}°F)`, (c) => c.heatTo(item.temperatureF, this.holdSeconds()), undefined, item.temperatureF);
   }
 
   private setKeepWarm(on: boolean): void {
     this.ctx.keepWarm = on;
     this.api.updatePlatformAccessories([this.accessory]);
     const s = this.manager.status;
-    if (s?.active) {
+    if (s?.active || this.heatPending()) {
       this.assertCanCommand();
       this.exec(`keep warm ${on ? 'on' : 'off'}`, (c) => c.setHold(on ? this.config.keepWarmMinutes * 60 : 0));
     }
   }
 
-  /** Run a command in the background; log and re-sync on failure. */
-  private exec(label: string, fn: (c: KettleClient) => Promise<unknown>, onlyIf?: () => boolean): void {
+  /** Whether a heat (to `tempF`, if given) has been sent but not yet settled. */
+  private heatPending(tempF?: number): boolean {
+    return [...this.pendingHeats.values()].some((f) => tempF === undefined || f === tempF);
+  }
+
+  /**
+   * Run a command in the background; log and re-sync on failure. `onlyIf` skips it when it's
+   * pointless given the status and the pending heats. `heatF` marks it as a heat to that temperature.
+   */
+  private exec(label: string, fn: (c: KettleClient) => Promise<unknown>, onlyIf?: () => boolean, heatF?: number): void {
     if (onlyIf && !onlyIf()) {
       this.log.debug(`${this.config.name}: ${label} skipped (not applicable in current state)`);
       setTimeout(() => this.resync(), 200);
       return;
     }
     this.log.info(`${this.config.name}: ${label}`);
+    const heatId = heatF === undefined ? undefined : ++this.nextHeatId;
+    if (heatId !== undefined) {
+      this.pendingHeats.set(heatId, heatF!);
+    }
     void this.manager.run(label, fn).then(
-      () => this.resync(),
+      () => undefined,
       (err) => {
         this.log.error(`${this.config.name}: ${label} failed: ${errorMessage(err)}`);
-        this.resync();
       },
-    );
+    ).finally(() => {
+      if (heatId !== undefined) {
+        this.pendingHeats.delete(heatId);
+      }
+      this.resync();
+    });
   }
 
   // ---------------------------------------------------------------------------------------------

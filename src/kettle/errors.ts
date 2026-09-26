@@ -1,19 +1,32 @@
 export class KettleError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
   }
 }
 
+const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+
+/** `cause`: the error that showed the link was gone (e.g. a failed write), kept for logs and hints. */
 export class NotConnectedError extends KettleError {
-  constructor() {
-    super('kettle is not connected');
+  constructor(cause?: unknown) {
+    super(cause === undefined ? 'kettle is not connected' : `kettle is not connected (${causeMessage(cause)})`, cause === undefined ? undefined : { cause });
   }
 }
 
 export class AckTimeoutError extends KettleError {
   constructor(public readonly command: number, ms: number) {
     super(`no response from kettle to command 0x${command.toString(16)} within ${ms} ms`);
+  }
+}
+
+/**
+ * A GATT write to the kettle failed while the link still looked up. On a weak link this is usually
+ * the first sign of a drop: BlueZ's write timeout (5 s) fires before the 6 s supervision timeout.
+ */
+export class WriteFailedError extends KettleError {
+  constructor(cause: unknown) {
+    super(`write to the kettle failed: ${causeMessage(cause)}`, { cause });
   }
 }
 

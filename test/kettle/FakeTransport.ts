@@ -15,6 +15,8 @@ export class FakeTransport extends EventEmitter implements KettleTransport {
   readonly sent: Frame[] = [];
   deviceInfo: DeviceInfo = { hardwareRevision: '1.0.00', softwareRevision: 'R0007V0012' };
   connectError?: Error;
+  /** Thrown by the next write (then cleared), like a GATT write that times out. */
+  nextWriteError?: Error;
   connectCount = 0;
   private readonly parser = new FrameParser();
 
@@ -33,6 +35,11 @@ export class FakeTransport extends EventEmitter implements KettleTransport {
   async write(chunk: Buffer): Promise<void> {
     if (!this.connected) {
       throw new Error('not connected');
+    }
+    if (this.nextWriteError) {
+      const err = this.nextWriteError;
+      this.nextWriteError = undefined;
+      throw err;
     }
     if (chunk.length > 20) {
       throw new Error(`chunk too large: ${chunk.length}`);

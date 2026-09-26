@@ -405,6 +405,79 @@ describe('KettleAccessory commands', () => {
     await until(() => lastSent(Cmd.STOP) !== undefined);
   });
 
+  it('sends a Stop tapped while a Heat waits to be resent, after the Heat', async () => {
+    const { fake, manager, thermostat, sub, sentCmds } = await setup();
+    const respond = fake.respond;
+    let dropped = false;
+    fake.respond = (frame, f) => {
+      if (frame.payload[1] === Cmd.SET_MODE && !dropped) {
+        dropped = true;
+        f.connectError = new Error('le-connection-abort-by-local'); // stay down until the test lets it back
+        f.drop();
+        return;
+      }
+      respond(frame, f);
+    };
+    await sub(S.Switch, 'preset-boil')!.getCharacteristic(C.On).handleSetRequest(true);
+    await until(() => dropped);
+    // The kettle never confirmed the Heat, so the cached status still says idle.
+    expect(manager.status?.active).toBe(false);
+    await thermostat().getCharacteristic(C.TargetHeatingCoolingState).handleSetRequest(C.TargetHeatingCoolingState.OFF);
+    fake.connectError = undefined;
+    await until(() => sentCmds().includes(Cmd.STOP));
+    expect(sentCmds()).toEqual([Cmd.SET_MODE, Cmd.SET_MODE, Cmd.STOP]);
+  });
+
+  it('a Heat waiting to be resent uses the target set in the meantime', async () => {
+    const { fake, thermostat, lastSent } = await setup();
+    const respond = fake.respond;
+    let dropped = false;
+    fake.respond = (frame, f) => {
+      if (frame.payload[1] === Cmd.SET_MODE && !dropped) {
+        dropped = true;
+        f.connectError = new Error('le-connection-abort-by-local'); // stay down until the test lets it back
+        f.drop();
+        return;
+      }
+      respond(frame, f);
+    };
+    await thermostat().getCharacteristic(C.TargetTemperature).handleSetRequest(100);
+    await thermostat().getCharacteristic(C.TargetHeatingCoolingState).handleSetRequest(C.TargetHeatingCoolingState.HEAT);
+    await until(() => dropped);
+    await thermostat().getCharacteristic(C.TargetTemperature).handleSetRequest(82); // 180 °F, Green Tea
+    fake.connectError = undefined;
+    await until(() => lastSent(Cmd.SET_MODE)!.payload[4] === Mode.GREEN_TEA);
+  });
+
+  it('a scene with one switch on and another off heats and does not stop', async () => {
+    const { sub, sentCmds } = await setup();
+    // A Home scene stores every tile: Boil on, Green Tea off. The Heat is still pending when the Off arrives.
+    await sub(S.Switch, 'preset-boil')!.getCharacteristic(C.On).handleSetRequest(true);
+    await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleSetRequest(false);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(sentCmds()).toEqual([Cmd.SET_MODE]);
+  });
+
+  it('a switch Heat waiting to be resent is followed by a target set in the meantime', async () => {
+    const { fake, sub, thermostat, lastSent } = await setup();
+    const respond = fake.respond;
+    let dropped = false;
+    fake.respond = (frame, f) => {
+      if (frame.payload[1] === Cmd.SET_MODE && !dropped) {
+        dropped = true;
+        f.connectError = new Error('le-connection-abort-by-local');
+        f.drop();
+        return;
+      }
+      respond(frame, f);
+    };
+    await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleSetRequest(true);
+    await until(() => dropped);
+    await thermostat().getCharacteristic(C.TargetTemperature).handleSetRequest(100); // 212 °F, Boil
+    fake.connectError = undefined;
+    await until(() => lastSent(Cmd.SET_MODE)!.payload[4] === Mode.BOIL);
+  });
+
   it('shows a delayed start set elsewhere (the VeSync app) as not heating', async () => {
     const { thermostat } = await setup({ status: payload(OWN_KETTLE_FRAMES.extendedScheduled297) });
     expect(await thermostat().getCharacteristic(C.CurrentHeatingCoolingState).handleGetRequest()).toBe(C.CurrentHeatingCoolingState.OFF);

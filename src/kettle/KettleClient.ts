@@ -20,7 +20,7 @@ import { detectProtocolVersion } from '../protocol/version.js';
 import { delay, errorMessage, Mutex } from '../util/async.js';
 import { type Logger, silentLogger } from '../util/log.js';
 import {
-  AckTimeoutError, CommandRejectedError, InvalidRegistrationKeyError, NotConnectedError, NotInPairingModeError,
+  AckTimeoutError, CommandRejectedError, InvalidRegistrationKeyError, NotConnectedError, NotInPairingModeError, WriteFailedError,
 } from './errors.js';
 
 export interface KettleStatus {
@@ -297,7 +297,7 @@ export class KettleClient extends EventEmitter<Events> {
         clearTimeout(p.timer);
         this.pending.delete(seq);
       }
-      throw err;
+      throw this.transport.connected ? new WriteFailedError(err) : new NotConnectedError(err);
     }
     return reply;
   }
