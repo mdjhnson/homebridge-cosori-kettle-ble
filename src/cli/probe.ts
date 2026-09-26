@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 
-import { AdapterNotFoundError, NodeBleTransport, resolveDbusAddress, type ScanResult, type WriteMode } from '../ble/NodeBleTransport.js';
+import { AdapterNotFoundError, BluezTransport, resolveDbusAddress, type ScanResult, type WriteMode } from '../ble/BluezTransport.js';
 import { InvalidRegistrationKeyError, NotInPairingModeError } from '../kettle/errors.js';
 import { describeCompletion, KettleClient, type KettleStatus } from '../kettle/KettleClient.js';
 import {
@@ -199,7 +199,7 @@ function hintFor(err: unknown): string | undefined {
 }
 
 async function withClient<T>(mac: string, flags: Flags, log: Logger, fn: (client: KettleClient) => Promise<T>): Promise<T> {
-  const transport = new NodeBleTransport(mac, {
+  const transport = new BluezTransport(mac, {
     dbusAddress: flags.dbus ?? 'auto',
     adapter: flags.adapter,
     writeMode: writeModeOption(flags),
@@ -251,7 +251,7 @@ async function reportAfterWrite(client: KettleClient, before: KettleStatus, log:
 }
 
 async function cmdAdapters(flags: Flags, log: Logger): Promise<void> {
-  const adapters = await NodeBleTransport.listAdapters({ dbusAddress: flags.dbus ?? 'auto', log });
+  const adapters = await BluezTransport.listAdapters({ dbusAddress: flags.dbus ?? 'auto', log });
   if (adapters.length === 0) {
     log.warn('No Bluetooth adapters found. Check `bluetoothctl list` and `journalctl -k | grep -i bluetooth` on the host.');
     return;
@@ -275,7 +275,7 @@ function looksLikeKettle(r: ScanResult): boolean {
 async function cmdScan(flags: Flags, log: Logger): Promise<void> {
   const durationMs = parseNumber(flags.duration ?? '10', '--duration', 1, 120) * 1000;
   log.info(`Scanning for ${durationMs / 1000}s…`);
-  const results = await NodeBleTransport.scan({ dbusAddress: flags.dbus ?? 'auto', adapter: flags.adapter, durationMs, log });
+  const results = await BluezTransport.scan({ dbusAddress: flags.dbus ?? 'auto', adapter: flags.adapter, durationMs, log });
   const kettles = results.filter(looksLikeKettle);
   const shown = (flags.all ? results : kettles).sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999));
   for (const r of shown) {

@@ -4,7 +4,7 @@ Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — norma
 
 > **Status: pre-release.** The protocol library and the `cosori-probe` CLI have been validated on a real kettle (HW 1.0.00 / SW R0007V0012). The HomeKit layer is tested against a simulated kettle and runs daily on the maintainer's Raspberry Pi 4; the remaining real-hardware HomeKit checks are in progress. Pre-releases are published to npm under the `next` tag.
 
-- BLE via [node-ble](https://github.com/chrvadala/node-ble) (BlueZ over D-Bus): **no privileged container, no capabilities, no `/dev` passthrough, no native modules**.
+- BLE through BlueZ over D-Bus (a small built-in client on [@homebridge/dbus-native](https://github.com/homebridge/dbus-native), the D-Bus library Homebridge itself uses): **no privileged container, no capabilities, no `/dev` passthrough, no native modules**.
 - Works in the official `homebridge/homebridge` Docker image with host networking and the host D-Bus socket mounted.
 
 ## Contents
@@ -31,7 +31,7 @@ Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — norma
 
 ```
  HomeKit ── Homebridge (Docker, network_mode: host)
-                 │  node-ble → dbus-next
+                 │  BluezTransport → @homebridge/dbus-native
                  ▼
    /run/dbus-host/system_bus_socket  (host D-Bus socket, mounted read-only)
                  │
@@ -60,7 +60,7 @@ bluetoothctl power on
 ```
 
 - **Do not pair or trust the kettle in `bluetoothctl`.** The kettle uses its own application-level registration, not BLE bonding.
-- **No D-Bus policy file is needed** when the container runs as root (the default for `homebridge/homebridge`): BlueZ's stock policy (`/etc/dbus-1/system.d/bluetooth.conf`) already allows root. If you run the container rootless or with user-namespace remapping, install a policy for that user as described in the [node-ble README](https://github.com/chrvadala/node-ble#provide-permissions).
+- **No D-Bus policy file is needed** when the container runs as root (the default for `homebridge/homebridge`): BlueZ's stock policy (`/etc/dbus-1/system.d/bluetooth.conf`) already allows root. If you run the container rootless or with user-namespace remapping, install a policy for that user that allows it to talk to `org.bluez` (the [node-ble README](https://github.com/chrvadala/node-ble#provide-permissions) has an example; the same policy works here).
 - **Pi 4 radio coexistence:** the onboard chip shares its antenna between 2.4 GHz Wi-Fi and Bluetooth. If connections are flaky, put the Pi on Ethernet or 5 GHz Wi-Fi.
 - **Metal cases and USB 3 devices:** aluminium cases such as the Argon ONE shield the onboard antenna, and USB 3 drives and hubs emit noise in the 2.4 GHz band. In testing, a Pi 4 in an Argon ONE with a USB 3 SSD could not hear anything weaker than about -80 dBm, lost the connection within seconds to minutes of the kettle starting to heat, and then could not see the kettle at all. The fix is a USB Bluetooth adapter; see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter). With one on an extension cable about 10 ft from the kettle, the same Pi connects in about 5 s instead of 10–40 s and reconnects by itself in about 4 s, although the link still drops every few minutes (see [Occasional disconnects](#occasional-disconnects)).
 
@@ -115,7 +115,7 @@ What each piece is for, and what is **not** needed:
 | Setting | Needed? | Why |
 |---|---|---|
 | `network_mode: host` | yes | HomeKit/mDNS. Not needed for Bluetooth itself. |
-| `/run/dbus:/run/dbus-host:ro` | yes | Gives node-ble the host's system bus, where BlueZ lives. `:ro` stops the image's setup script from modifying host files. |
+| `/run/dbus:/run/dbus-host:ro` | yes | Gives the plugin the host's system bus, where BlueZ lives. `:ro` stops the image's setup script from modifying host files. |
 | `privileged: true` | **no** | BlueZ does the radio work on the host. |
 | `cap_add: [NET_ADMIN, NET_RAW]` | **no** | Only raw-HCI libraries (noble) need these. |
 | `devices: [/dev/hci0]` | **no** | Same reason. |
@@ -357,7 +357,7 @@ If you still want to use the VeSync app, set `connectionMode` to `onDemand`: the
 | `kettle rejected the registration key` | Wrong key. Re-capture it (Option A) or pair (Option B). |
 | `not in pairing mode` | Hold the MyBrew button until the kettle signals pairing mode, then retry. |
 | Temperature reads 1–3 °F below the setpoint while holding | Normal kettle behaviour. |
-| `usocket@0.3.0 install` … `gyp ERR! Completion callback never invoked!` in an npm install log (for example when installing or updating any plugin) | Harmless. `usocket` is an optional native dependency of `dbus-next` (via `node-ble`), and its bundled node-gyp 7 can't build on Node 24. npm skips it and the install succeeds. Without it, `dbus-next` connects to the system bus with Node's own `net` socket, which is all this plugin needs. The warning comes back on every npm install in `/homebridge`, and a plugin can't silence it from its own `package.json`. |
+| `usocket@0.3.0 install` … `gyp ERR! Completion callback never invoked!` in an npm install log (for example when installing or updating any plugin) | Harmless, and no longer caused by this plugin from the version after 0.2.0-beta.1. `usocket` was an optional native dependency of `node-ble`, which 0.2.0-beta.1 and earlier used; its bundled node-gyp 7 can't build on Node 24, so npm skipped it and the install succeeded. If you still see it after updating, another plugin in `/homebridge` pulls in `usocket`. |
 
 ### Occasional disconnects
 

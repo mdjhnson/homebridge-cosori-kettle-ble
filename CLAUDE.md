@@ -1,6 +1,6 @@
 # CLAUDE.md — homebridge-cosori-kettle-ble
 
-Homebridge dynamic-platform plugin (TypeScript, ESM) that controls a **Cosori Smart Gooseneck Kettle** over BLE through BlueZ/D-Bus (`node-ble`), designed to run in the `homebridge/homebridge` Docker image. Repo: https://github.com/mdjhnson/homebridge-cosori-kettle-ble (public). Released to npm as `homebridge-cosori-kettle-ble` from GitHub releases (`docs/RELEASING.md`).
+Homebridge dynamic-platform plugin (TypeScript, ESM) that controls a **Cosori Smart Gooseneck Kettle** over BLE through BlueZ/D-Bus (a small in-house client on `@homebridge/dbus-native`), designed to run in the `homebridge/homebridge` Docker image. Repo: https://github.com/mdjhnson/homebridge-cosori-kettle-ble (public). Released to npm as `homebridge-cosori-kettle-ble` from GitHub releases (`docs/RELEASING.md`).
 
 **Read first:**
 - `docs/STATUS.md`: current state, what's deployed, open issues, next steps.
@@ -29,13 +29,14 @@ Before every commit, run lint, typecheck, test and build, and **gate the commit 
 | Path | What |
 |---|---|
 | `src/protocol/` | Pure protocol: constants, checksum, framing plus streaming parser, command builders, status decoders, key handling, `.pklg` reader, V0/V1 detection |
-| `src/ble/` | `Transport` interface; `NodeBleTransport` (BlueZ over D-Bus, Docker socket auto-detect, adapter selection by MAC or hciN) |
+| `src/ble/` | `Transport` interface; `BluezTransport` (BlueZ over D-Bus, Docker socket auto-detect, adapter selection by MAC or hciN); `bluez.ts` (pure object-tree helpers); `dbus.ts` (the only `@homebridge/dbus-native` import: calls with timeouts, signals, variants) |
 | `src/kettle/` | `KettleClient` (seq/ACK, hello/register, commands, status events); `ConnectionManager` (persistent/on-demand loop, backoff, command queue) |
 | `src/accessory/` | `KettleAccessory` (HAP services); `mapping.ts` (°F↔°C, smoothing, names), pure and unit-tested |
 | `src/platform.ts`, `src/config.ts` | Homebridge platform; defensive config parsing |
 | `src/cli/probe.ts` | `cosori-probe`: adapters, scan, info, key-from-log, key-from-packets, decode-log, status, watch, pair, set-mybrew, hold, start, delay, stop |
 | `test/fixtures/captures.ts` | **Real captured frames** (upstream projects, plus `OWN_KETTLE_FRAMES` from the maintainer's kettle). Add every new real capture here |
 | `test/kettle/FakeTransport.ts` | Scriptable fake kettle used by client, manager and accessory tests |
+| `test/ble/FakeBluez.ts` | In-memory BlueZ behind the `Bus` interface, with replies encoded through dbus-native's own marshaller, for transport tests |
 | `test/accessory/harness.ts` | Real `@homebridge/hap-nodejs` with a fake PlatformAccessory, for testing GET/SET handlers |
 
 ## Rules for this project
