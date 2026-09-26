@@ -221,6 +221,33 @@ describe('ConnectionManager commands across a dropped link', () => {
     expect(fake.connectCount).toBe(2);
   });
 
+  it('treats a failed write as a dying link: sent again once BlueZ ends it and the kettle is back', async () => {
+    const log = captureLog();
+    const { fake, manager } = setup(kettle(), { log });
+    manager.start();
+    await until(() => manager.connected);
+    fake.nextWriteError = new Error('GATT write timed out after 5000 ms');
+    const p = manager.run('stop', (c) => c.stop());
+    await until(() => log.lines.some((l) => /write to the kettle failed: GATT write timed out/.test(l.message)));
+    fake.drop();
+    await p;
+    expect(commandsSent(fake, Cmd.STOP)).toBe(1); // the failed write never reached the kettle
+    expect(fake.connectCount).toBe(2);
+  });
+
+  it('fails queued commands at once when the plugin stops', async () => {
+    const { fake, manager } = setup(kettle(), { commandTimeoutMs: 5_000 });
+    fake.connectError = new Error('not found');
+    manager.start();
+    const results = Promise.allSettled([manager.run('a', (c) => c.stop()), manager.run('b', (c) => c.stop())]);
+    await new Promise((r) => setTimeout(r, 20));
+    const started = Date.now();
+    await manager.stop();
+    const settled = await results;
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(settled.map((r) => (r.status === 'rejected' ? (r.reason as Error).message : 'ok'))).toEqual(['plugin is shutting down', 'plugin is shutting down']);
+  });
+
   it('reports the missing ACK when the link never dropped', async () => {
     const base = kettle();
     const { fake, manager } = setup((frame, f) => {

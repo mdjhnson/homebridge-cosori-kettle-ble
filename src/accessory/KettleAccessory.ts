@@ -218,8 +218,10 @@ export class KettleAccessory {
     this.assertCanCommand();
     if (on) {
       this.assertOnBase();
-      const targetF = this.ctx.targetF ?? this.manager.status?.setpointF ?? PRESET_TEMP_F[Mode.BOIL]!;
-      this.exec(`heat to ${targetF}°F`, (c) => c.heatTo(targetF, this.holdSeconds()));
+      const target = () => this.ctx.targetF ?? this.manager.status?.setpointF ?? PRESET_TEMP_F[Mode.BOIL]!;
+      // Read the target when the command is sent: a dial change while this waits (for the link, or
+      // to be resent after a drop) only updates ctx, because the kettle isn't heating yet.
+      this.exec(`heat to ${target()}°F`, (c) => c.heatTo(target(), this.holdSeconds()));
     } else {
       this.exec('stop', (c) => c.stop(), () => !!(this.manager.status?.active || this.manager.status?.scheduled));
     }
@@ -261,9 +263,13 @@ export class KettleAccessory {
     }
   }
 
-  /** Run a command in the background; log and re-sync on failure. */
+  /**
+   * Run a command in the background; log and re-sync on failure. `onlyIf` skips it when the cached
+   * status says it's pointless, but not while other commands are pending: their effect (a Heat still
+   * waiting for the link, say) isn't in the status yet.
+   */
   private exec(label: string, fn: (c: KettleClient) => Promise<unknown>, onlyIf?: () => boolean): void {
-    if (onlyIf && !onlyIf()) {
+    if (onlyIf && !this.manager.busy && !onlyIf()) {
       this.log.debug(`${this.config.name}: ${label} skipped (not applicable in current state)`);
       setTimeout(() => this.resync(), 200);
       return;

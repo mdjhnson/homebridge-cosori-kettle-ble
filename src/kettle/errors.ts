@@ -17,6 +17,16 @@ export class AckTimeoutError extends KettleError {
   }
 }
 
+/**
+ * A GATT write to the kettle failed while the link still looked up. On a weak link this is usually
+ * the first sign of a drop: BlueZ's write timeout (5 s) fires before the 6 s supervision timeout.
+ */
+export class WriteFailedError extends KettleError {
+  constructor(cause: unknown) {
+    super(`write to the kettle failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
+
 /** Hello rejected (status 01): the key isn't registered with this kettle. */
 export class InvalidRegistrationKeyError extends KettleError {
   constructor() {

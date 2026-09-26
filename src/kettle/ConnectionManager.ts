@@ -16,7 +16,7 @@ import { Backoff, type BackoffOptions } from '../util/backoff.js';
 import { delay, errorMessage, Mutex } from '../util/async.js';
 import { type Logger } from '../util/log.js';
 import type { ConnectionMode } from '../config.js';
-import { AckTimeoutError, InvalidRegistrationKeyError, NotConnectedError } from './errors.js';
+import { AckTimeoutError, InvalidRegistrationKeyError, NotConnectedError, WriteFailedError } from './errors.js';
 import type { DeviceInfo } from '../ble/Transport.js';
 import type { KettleClient, KettleStatus } from './KettleClient.js';
 
@@ -62,12 +62,12 @@ export class KettleUnavailableError extends Error {
 const DEFAULT_DOWN_WARNINGS_MS = [60_000, 300_000, 900_000, 1_800_000];
 
 /**
- * Errors that mean the link went away under a command, not that the kettle refused it. After two
- * unanswered sends (KettleClient retries once) the kettle may or may not have acted on it, which is
- * fine: every command is a "set to this state", so sending it again is harmless.
+ * Errors that mean the link went away under a command, not that the kettle refused it. The kettle
+ * may or may not have acted on it, which is fine: every command is a "set to this state", so sending
+ * it again is harmless.
  */
 function isLinkFailure(err: unknown): boolean {
-  return err instanceof NotConnectedError || err instanceof AckTimeoutError;
+  return err instanceof NotConnectedError || err instanceof AckTimeoutError || err instanceof WriteFailedError;
 }
 
 /** "4.1 s", "12 min", "2 h 5 min". */
@@ -85,6 +85,8 @@ export function formatDuration(ms: number): string {
 
 export class ConnectionManager extends EventEmitter<Events> {
   private stopped = true;
+  /** Set by stop(): commands still queued fail at once instead of waiting for a link. */
+  private shuttingDown = false;
   private loopPromise?: Promise<void>;
   private wakeController = new AbortController();
   private readonly backoff: Backoff;
@@ -152,6 +154,11 @@ export class ConnectionManager extends EventEmitter<Events> {
     return this.everConnected || this.consecutiveConnectFailures > 0 ? now - this.downSince : 0;
   }
 
+  /** Whether a command is queued or running (so the cached status may be about to change). */
+  get busy(): boolean {
+    return this.pendingCommands > 0;
+  }
+
   get registrationKeyRejected(): boolean {
     return this.keyRejected;
   }
@@ -173,11 +180,13 @@ export class ConnectionManager extends EventEmitter<Events> {
       return;
     }
     this.stopped = false;
+    this.shuttingDown = false;
     this.loopPromise = this.loop().catch((err) => this.log.error(`Connection loop crashed: ${errorMessage(err)}`));
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.shuttingDown = true;
     this.wake();
     this.rejectWaiters(new KettleUnavailableError('plugin is shutting down'));
     await this.loopPromise;
@@ -186,7 +195,9 @@ export class ConnectionManager extends EventEmitter<Events> {
 
   /**
    * Run a command once the kettle is connected and authenticated. Commands run one at a time, in the
-   * order they were issued, and each waits at most commandTimeoutMs (from now) for the link.
+   * order they were issued. Each waits at most commandTimeoutMs (counted from now) for the link; one
+   * that reaches the front of the queue with the link up runs even if that time has passed, so a Stop
+   * queued behind a slow Heat is never dropped while the Heat goes through.
    *
    * If the link drops under the command (it was never acknowledged), it's sent once more on the next
    * connection, provided that comes within resendWindowMs. The queue keeps a later command (a Stop
@@ -196,21 +207,26 @@ export class ConnectionManager extends EventEmitter<Events> {
     this.pendingCommands++;
     this.lastActivityAt = Date.now();
     this.wake();
-    const deadline = Date.now() + (this.options.commandTimeoutMs ?? 45_000);
+    const timeoutMs = this.options.commandTimeoutMs ?? 45_000;
+    const deadline = Date.now() + timeoutMs;
     try {
       return await this.commands.run(async () => {
-        await this.waitReady(label, deadline - Date.now(), 'not reachable');
+        await this.waitReady(deadline - Date.now(), `${label}: kettle not reachable within ${formatDuration(timeoutMs)}`);
         const attemptOn = this.connectionId;
         let result: T;
         try {
           result = await fn(this.client);
         } catch (err) {
-          if (!isLinkFailure(err) || this.stopped) {
+          if (!isLinkFailure(err) || this.shuttingDown) {
             throw err;
           }
           const windowMs = this.options.resendWindowMs ?? 30_000;
           this.log.debug(`${label}: ${errorMessage(err)}; will send again after the reconnect`);
-          await this.waitReady(label, windowMs, 'lost the link and did not reconnect', attemptOn).catch((waitErr: unknown) => {
+          // Check the link now rather than at the next scheduled poll, so a dead one is noticed sooner.
+          this.nextPollAt = 0;
+          this.wake();
+          const message = `${label}: kettle lost the link and did not reconnect within ${formatDuration(windowMs)}`;
+          await this.waitReady(windowMs, message, attemptOn).catch((waitErr: unknown) => {
             // Still on the same link: the kettle just didn't answer, so report that instead.
             throw this.ready && this.connectionId === attemptOn ? err : waitErr;
           });
@@ -233,7 +249,10 @@ export class ConnectionManager extends EventEmitter<Events> {
    * Resolve once the kettle is connected and authenticated. With `after`, wait for a connection newer
    * than that one (the link a command just failed on may not have been declared dead yet).
    */
-  private waitReady(label: string, timeoutMs: number, reason: string, after?: number): Promise<void> {
+  private waitReady(timeoutMs: number, timeoutMessage: string, after?: number): Promise<void> {
+    if (this.shuttingDown) {
+      return Promise.reject(new KettleUnavailableError('plugin is shutting down'));
+    }
     if (this.ready && (after === undefined || this.connectionId > after)) {
       return Promise.resolve();
     }
@@ -254,7 +273,7 @@ export class ConnectionManager extends EventEmitter<Events> {
       };
       timer = setTimeout(() => {
         this.waiters.delete(waiter);
-        reject(new KettleUnavailableError(`${label}: kettle ${reason} within ${Math.round(timeoutMs / 1000)} s`));
+        reject(new KettleUnavailableError(timeoutMessage));
       }, Math.max(0, timeoutMs));
       this.waiters.add(waiter);
     });

@@ -286,11 +286,12 @@ In the plugin settings, **Temperature switches** is a list you can edit: add, re
 
 For "every weekday at 6:30", create a Home app automation (*Automation → A Time of Day → Kettle → Green Tea*), or ask Siri: "at 6:30 turn on Green Tea" (Siri creates the automation in the Shortcuts app). The command is sent at that moment, so it needs the kettle to be reachable then: see the next paragraph. A delayed start set in the VeSync app uses the kettle's own timer and shows in HomeKit as not heating until it starts.
 
-**Commands during a dropped connection.** A command never runs much later than you asked:
+**Commands during a dropped connection.** A command never waits indefinitely:
 - If the kettle has been unreachable for **more than 15 s**, the command is refused right away and HomeKit shows **No Response**. It is not queued.
 - If the connection dropped **less than 15 s** ago, the command waits for the reconnect for **up to 45 s**, then runs. If the kettle is still unreachable after 45 s, the command is dropped, the log records an error, and the switch turns back off.
-- If the connection drops **while a command is being sent** (the kettle goes silent for a few seconds before the drop is noticed), the command is sent once more after the reconnect, as long as that comes within 30 s. The log shows `Sending "Green Tea (180°F)" again: the link dropped before the kettle confirmed it`. Commands always reach the kettle in the order you sent them, so a Stop sent during the drop still wins over the Heat before it.
-- There's no retry after that. Note that HomeKit automations and Siri can't see a dropped command (the plugin answers HomeKit immediately, because a Bluetooth connection can take longer than HomeKit waits), so check the log if a scheduled kettle didn't heat.
+- If the connection drops **while a command is being sent** (the kettle goes silent for a few seconds before the drop is noticed), the command is sent once more after the reconnect, as long as that comes within 30 s. The log shows `Sending "Green Tea (180°F)" again: the link dropped before the kettle confirmed it`.
+- Commands reach the kettle one at a time, in the order you sent them. A Stop sent while a Heat is still waiting goes after it, so the kettle ends up off, and a new target temperature set while a Heat is waiting is the one it heats to.
+- There's no retry beyond that. Note that HomeKit automations and Siri can't see a dropped command (the plugin answers HomeKit immediately, because a Bluetooth connection can take longer than HomeKit waits), so check the log if a scheduled kettle didn't heat.
 
 When the plugin cannot reach the kettle, its tiles show **No Response** after about 90 seconds (persistent mode).
 
