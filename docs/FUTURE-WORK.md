@@ -128,6 +128,8 @@ Schema defaults; validation (names, range, duplicates, Celsius); migration from 
 
 **Why:** every deprecated-package warning on install (`request`, `tar@6`, `glob@7`, `rimraf@3`, `npmlog`, `gauge`, `are-we-there-yet`, `har-validator`, `uuid@3`, `inflight`) comes from one optional chain: `node-ble 1.13.0 → dbus-next 0.10.2 → usocket 0.3.0 (optional, native) → node-gyp 7`. None of it runs. The real problem is staleness: `dbus-next` hasn't been released since 2022, and its `xml2js@0.4` has a known prototype-pollution advisory (fixed in 0.5+).
 
+**`npm audit` (2026-09-25, at the first npm publish):** 11 findings (3 critical, 1 high, 7 moderate), all in the runtime tree, so users of the published package see them too. Critical: `request`, `form-data`, `tar` (via `node-gyp` 7, under `usocket`). High: `node-gyp`. Moderate: `node-ble`, `dbus-next`, `usocket`, `xml2js`, `qs`, `tough-cookie`, `uuid`. `npm audit --omit=dev` reports the same 11. Only `xml2js` is on a code path that runs (it parses BlueZ's introspection XML from the local system bus); the rest belong to the optional native build that never succeeds. There's no fix short of this section's replacement: `npm audit fix --force` can't help, and our `overrides` don't apply to consumer installs.
+
 **Libraries checked on npm (2026-09-24), all pure JS with no native or optional deps:**
 
 | Library | What it is | Notes |
@@ -160,7 +162,7 @@ Rejected: noble variants (native HCI sockets, bypass BlueZ, need container privi
 
 ## 5. Release: publish to npm, built by GitHub Actions (maintainer's goal, 2026-09-25)
 
-**Built 2026-09-25: see `docs/RELEASING.md`.** It differs from the plan below in three ways. (1) The workflow **stages** each version with `npm stage publish`, and it goes live only after the maintainer approves it with 2FA: npm's default for trusted publishers created after 2026-09-03. (2) The first version is published by hand, because npm attaches a trusted publisher only to a package that already exists. (3) npm may also point `latest` at that first version, so "`latest` stays empty" below may not hold. That's harmless while every version is a beta.
+**Done 2026-09-25: `0.2.0-beta.1` is on npm, and the one-time setup in `docs/RELEASING.md` is complete** (trusted publisher with staged publishing, tokens disallowed). **Built 2026-09-25: see `docs/RELEASING.md`.** It differs from the plan below in three ways. (1) The workflow **stages** each version with `npm stage publish`, and it goes live only after the maintainer approves it with 2FA: npm's default for trusted publishers created after 2026-09-03. (2) The first version is published by hand, because npm attaches a trusted publisher only to a package that already exists. (3) npm may also point `latest` at that first version, so "`latest` stays empty" below may not hold. That's harmless while every version is a beta.
 
 **Goal:** stop hand-deploying tarballs. Publish `homebridge-cosori-kettle-ble` to npm from a GitHub Actions workflow, so installs and updates go through the Homebridge UI like any other plugin. Both `homebridge-cosori-kettle-ble` and `homebridge-cosori-kettle` were unclaimed on npm on 2026-09-25.
 

@@ -8,6 +8,8 @@ Releases go to npm as `homebridge-cosori-kettle-ble`. Publishing a GitHub releas
 
 ## One-time setup
 
+**Done 2026-09-25** with `0.2.0-beta.1`. Kept for reference, e.g. if the trusted publisher ever has to be recreated.
+
 npm can only attach a trusted publisher to a package that already exists, so the first version is published by hand.
 
 1. **npm account.** Create one at npmjs.com with 2FA on, then log in on the Mac: `npm login`.
@@ -25,7 +27,7 @@ npm can only attach a trusted publisher to a package that already exists, so the
    ```sh
    gh release create v0.2.0-beta.1 --target main --prerelease --title "0.2.0-beta.1" --notes-file <(awk '/^## /{p=($2=="0.2.0-beta.1")} p' CHANGELOG.md | sed 1d)
    ```
-6. **Check the dist-tags.** npm may also point `latest` at the very first version. Look with `npm dist-tag ls homebridge-cosori-kettle-ble`. That's harmless while every version is a beta.
+6. **Check the dist-tags.** npm may also point `latest` at the very first version. Look with `npm dist-tag ls homebridge-cosori-kettle-ble`. That's harmless while every version is a beta. (Right after the first publish, `npm view` can return 404 for a minute or so while the registry's cache still holds the earlier "not found".)
 
 ## Each release
 
@@ -35,7 +37,7 @@ npm can only attach a trusted publisher to a package that already exists, so the
    gh release create v<new-version> --target main --prerelease --title "<new-version>" --notes-file <(awk '/^## /{p=($2=="<new-version>")} p' CHANGELOG.md | sed 1d)
    ```
 3. **Watch the workflow:** `gh run watch "$(gh run list --workflow release.yml --limit 1 --json databaseId -q '.[0].databaseId')"`.
-4. **Approve** with 2FA: `npm stage list homebridge-cosori-kettle-ble`, then `npm stage approve <stage-id>`. Or use the package's *Staged Packages* tab on npmjs.com. Reject a bad one with `npm stage reject <stage-id>`.
+4. **Approve** with 2FA. `npm login` sessions expire after a few hours, so if `npm whoami` fails, run `npm login` first. Then: `npm stage list homebridge-cosori-kettle-ble`, then `npm stage approve <stage-id>`. Or use the package's *Staged Packages* tab on npmjs.com. Reject a bad one with `npm stage reject <stage-id>`.
 5. **Deploy to the Pi.** Back up `config.json` first. Install the exact version, then restart **only the Kettle child bridge**:
    ```sh
    docker exec homebridge npm install --prefix /homebridge homebridge-cosori-kettle-ble@<new-version>

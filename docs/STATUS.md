@@ -1,6 +1,11 @@
 # Status
 
-_Last updated: 2026-09-25 (afternoon, US Central)._
+_Last updated: 2026-09-25 (evening, US Central)._
+
+## Released
+
+- **`0.2.0-beta.1` is on npm** (published 2026-09-25 from `main` at `57ae33b`), under `next`. npm also pointed `latest` at it, as it does for a package's first version. The GitHub release `v0.2.0-beta.1` holds the notes.
+- The one-time setup in `docs/RELEASING.md` is done: first publish by hand, trusted publisher for `release.yml` with staged publishing only, and publishing access set to "require 2FA and disallow tokens". Every later version goes through "Each release" there: a version-bump PR, a GitHub release, then `npm stage approve` with 2FA.
 
 ## Checkpoints
 
@@ -15,7 +20,8 @@ _Last updated: 2026-09-25 (afternoon, US Central)._
 
 - Plugin v0.1.0 with the code of `main` at `50ce5b3` (PRs #3 and #4 merged 2026-09-25), installed 2026-09-25 00:48. New since the last install: the MyBrew-mode target fix (`61c645d`, Open issue 6). Config backed up first (`config.json.bak-before-mybrew-fix-20260925-004742`). Only the Kettle child bridge was restarted: it started at 00:48:04 and connected in 2.0 s.
 - Before that: `main` at `b695c12` (PR #1, temperature switches, with the second round of review fixes `1119d2c`), installed 2026-09-25 00:14, which brought the temperature switches, the reconnect logging (`5a682e3`) and adapter selection by MAC (`f3b36ef`). On PR #1's branch: first install `a65a434` (2026-09-24 23:30; migration notes logged, tiles Green Tea, Coffee, Boil carried over, MyBrew removed), then review fixes `85ed8b7` (23:56).
-- To deploy an update: `npm pack` → copy into the container → `npm install --prefix /homebridge <tgz>` → **restart only the Kettle child bridge**.
+- To deploy a release: back up `config.json` → `docker exec homebridge npm install --prefix /homebridge homebridge-cosori-kettle-ble@<version>` → **restart only the Kettle child bridge**. The Pi hasn't been switched to the npm package yet; `0.2.0-beta.1` is the first candidate.
+- To test a branch before a release: `npm pack` → copy into the container → `npm install --prefix /homebridge <tgz>` → restart only the Kettle child bridge.
 - Config: a `CosoriKettleBLE` platform as a child bridge, persistent mode, every switch enabled (the user asked for all of them), `"adapter"` set to the USB adapter's MAC. Pi-specific details are in `docs/local/` (gitignored).
 - Radio: a TP-Link UB500 (RTL8761BU) USB Bluetooth adapter since 2026-09-24. The onboard CYW43455 is disabled (`dtoverlay=disable-bt`), so the USB adapter is now `hci0`. After the reboot the plugin logged `Using Bluetooth adapter hci0 (…)` and connected in 5.0 s.
 
@@ -61,4 +67,5 @@ _Last updated: 2026-09-25 (afternoon, US Central)._
 
 1. Open issue 1: follow its plan (reconnect logging deployed 2026-09-24; measure drops and their HomeKit impact during normal use, then decide).
 2. Finish the Checkpoint C list. Done 2026-09-25: heat and off via the dial (including retargeting while heating), Keep Warm holding after the heat finished, and a preset switch (Green Tea, from a Home app automation). Still to do: On Base. The Delay Start switch was removed instead of tested (FUTURE-WORK §2).
-3. Replace `node-ble` (FUTURE-WORK §3b, agreed).
+3. Install `0.2.0-beta.1` on the Pi from npm (replaces the tarball build; also brings the Delay Start removal from PR #6).
+4. Replace `node-ble` (FUTURE-WORK §3b, agreed). Now that the plugin is public on npm, its 11 audit findings show up on every user's install.
