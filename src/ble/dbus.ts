@@ -7,7 +7,7 @@
  */
 import type { EventEmitter } from 'node:events';
 
-import { errorMessage, TimeoutError } from '../util/async.js';
+import { errorMessage, TimeoutError, withTimeout } from '../util/async.js';
 
 /** A value as dbus-native marshals it: variants are `[signature, value]` on the way in. */
 export type DbusValue = unknown;
@@ -22,7 +22,7 @@ export interface MethodCall {
 }
 
 export interface SignalMatch {
-  /** Well-known sender name; the bus daemon filters on it. */
+  /** Well-known sender name. Only broadcast signals from its current owner are delivered. */
   sender: string;
   path: string;
   interface: string;
@@ -38,7 +38,10 @@ export interface Bus {
   readonly failure: Promise<never>;
   /** Call a method and resolve with the reply body. */
   call(msg: MethodCall, timeoutMs: number, label: string): Promise<DbusValue[]>;
-  /** Subscribe to a signal (AddMatch). Resolves once the bus will deliver it; returns the unsubscribe function. */
+  /**
+   * Subscribe to a signal (AddMatch). Resolves once the bus will deliver it; returns the unsubscribe function.
+   * Looks up the sender's current owner each time, so a restarted service is picked up on the next subscribe.
+   */
   subscribe(match: SignalMatch, handler: SignalHandler): Promise<() => void>;
   close(): void;
 }
@@ -80,6 +83,8 @@ export function matchRule(match: SignalMatch): string {
 // The slice of @homebridge/dbus-native we use. Its own index.d.ts doesn't declare createClient.
 interface NativeMessage {
   type: number;
+  sender?: string;
+  destination?: string;
   path?: string;
   interface?: string;
   member?: string;
@@ -92,8 +97,8 @@ interface NativeError {
 }
 
 export interface NativeBus {
-  connection: EventEmitter & { end(): void };
-  /** Pending reply handlers by serial (internal, but stable across versions). */
+  connection: EventEmitter & { end(): void; state?: string };
+  /** Pending reply handlers by serial (internal; the version is pinned and a test checks it on the real client). */
   cookies?: Record<number, unknown>;
   invoke(msg: MethodCall & { serial?: number }, callback: (err: NativeError | null, ...body: DbusValue[]) => void): void;
 }
@@ -113,6 +118,8 @@ export class NativeDbusBus implements Bus {
   private closed = false;
   private readonly pending = new Set<(err: Error) => void>();
   private readonly subscriptions = new Set<{ match: SignalMatch; handler: SignalHandler }>();
+  /** Well-known name → the unique name that owns it (e.g. org.bluez → :1.7). */
+  private readonly owners = new Map<string, string>();
 
   constructor(private readonly bus: NativeBus, signalType: number, private readonly where: string, private readonly onError: (message: string) => void) {
     this.failure = new Promise<never>((_, reject) => {
@@ -147,8 +154,13 @@ export class NativeDbusBus implements Bus {
   }
 
   private dispatch(msg: NativeMessage): void {
+    // AddMatch only filters broadcasts: any peer may address a signal to us directly, and BlueZ never does.
+    if (msg.destination) {
+      return;
+    }
     for (const { match, handler } of this.subscriptions) {
-      if (match.path === msg.path && match.interface === msg.interface && match.member === msg.member) {
+      if (match.path === msg.path && match.interface === msg.interface && match.member === msg.member
+        && msg.sender !== undefined && this.owners.get(match.sender) === msg.sender) {
         try {
           handler(msg.body ?? []);
         } catch {
@@ -178,18 +190,49 @@ export class NativeDbusBus implements Bus {
         reject(new TimeoutError(label, timeoutMs));
       }, timeoutMs);
       this.pending.add(reject);
-      this.bus.invoke(out, (err, ...body) => {
+      try {
+        this.bus.invoke(out, (err, ...body) => {
+          settle();
+          if (err) {
+            reject(new DbusError(err.name ?? 'org.freedesktop.DBus.Error.Failed', err.message ?? ''));
+          } else {
+            resolve(body);
+          }
+        });
+      } catch {
+        // dbus-native's encoding errors quote the whole body, which for a hello write holds the key: don't pass them on.
         settle();
-        if (err) {
-          reject(new DbusError(err.name ?? 'org.freedesktop.DBus.Error.Failed', err.message ?? ''));
-        } else {
-          resolve(body);
+        if (out.serial !== undefined && this.bus.cookies) {
+          delete this.bus.cookies[out.serial];
         }
-      });
+        reject(new Error(`${label}: D-Bus message could not be encoded`));
+      }
     });
   }
 
+  /**
+   * Resolves once the handshake is done. Before that dbus-native queues messages and encodes them later, outside
+   * `call()`'s try/catch, so an encoding error would be an uncaught exception.
+   */
+  ready(timeoutMs: number): Promise<void> {
+    if (this.bus.connection.state === 'connected') {
+      return Promise.resolve();
+    }
+    const connected = new Promise<void>((resolve) => this.bus.connection.once('connect', () => resolve()));
+    return withTimeout(Promise.race([connected, this.failure]), timeoutMs, `D-Bus connection to ${this.where}`);
+  }
+
+  private async lookupOwner(name: string): Promise<void> {
+    const [owner] = await this.call({ destination: 'org.freedesktop.DBus', path: '/org/freedesktop/DBus', interface: 'org.freedesktop.DBus',
+      member: 'GetNameOwner', signature: 's', body: [name] }, 5_000, `D-Bus GetNameOwner ${name}`);
+    if (typeof owner !== 'string') {
+      throw new Error(`D-Bus GetNameOwner ${name}: unexpected reply`);
+    }
+    this.owners.set(name, owner);
+  }
+
   async subscribe(match: SignalMatch, handler: SignalHandler): Promise<() => void> {
+    await this.lookupOwner(match.sender);
     const entry = { match, handler };
     this.subscriptions.add(entry);
     const rule = matchRule(match);
@@ -227,9 +270,16 @@ export class NativeDbusBus implements Bus {
 
 export type BusFactory = (address: string | undefined, onError: (message: string) => void) => Promise<Bus>;
 
-/** Open the system bus (or `address`). Connection errors surface through `failure`, not as a throw. */
+/** Open the system bus (or `address`) and wait for the handshake. Rejects if the bus can't be reached. */
 export const openBus: BusFactory = async (address, onError) => {
   const { default: dbus } = await import('@homebridge/dbus-native') as unknown as { default: DbusNative };
   const busAddress = address ?? DEFAULT_SYSTEM_BUS;
-  return new NativeDbusBus(dbus.createClient({ busAddress }), dbus.messageType.signal, address ?? 'default system bus', onError);
+  const bus = new NativeDbusBus(dbus.createClient({ busAddress }), dbus.messageType.signal, address ?? 'default system bus', onError);
+  try {
+    await bus.ready(10_000);
+  } catch (err) {
+    bus.close();
+    throw err;
+  }
+  return bus;
 };

@@ -225,6 +225,12 @@ export const PACKETLOGGER_EXPORT = [
  * Frames captured from the maintainer's own kettle (HW 1.0.00 / SW R0007V0012, VeSync iOS app,
  * PacketLogger, 2026-09-23). Complete (non-truncated) values only; the registration key is omitted.
  */
+/**
+ * The maintainer's kettle's BLE advertisement (2026-09-24, FUTURE-WORK §1b): manufacturer data for company 0x06D0
+ * (Etekcity), i.e. the bytes after `d0 06`: header 01, the MAC reversed, model C2 D4, then 03 01 02 (unknown).
+ */
+export const OWN_KETTLE_MANUFACTURER_DATA = '01 26 c3 0f fa 58 fc c2 d4 03 01 02';
+
 export const OWN_KETTLE_FRAMES = {
   /** App "Start" on Green Tea with "Hold Temp: 30 min": hold 08 07 → 1800 s little-endian; byte[5] = 00. */
   startGreenTeaHold30: 'A5220309008701F0A3000100010807',

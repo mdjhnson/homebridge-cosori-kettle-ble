@@ -33,9 +33,9 @@ export type Properties = Record<string, unknown>;
 /** path → interface → properties. */
 export type ManagedObjects = Map<string, Map<string, Properties>>;
 
-/** Turn an `a{sv}` (pairs of name and variant) into a plain object. */
+/** Turn an `a{sv}` (pairs of name and variant) into a prototype-free object. */
 export function propertiesFrom(pairs: DbusValue): Properties {
-  const out: Properties = {};
+  const out: Properties = Object.create(null) as Properties;
   if (Array.isArray(pairs)) {
     for (const pair of pairs) {
       if (Array.isArray(pair) && typeof pair[0] === 'string') {

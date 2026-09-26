@@ -7,7 +7,8 @@ All notable changes to this plugin. Versions follow [semver](https://semver.org)
 ### Changes
 
 - **Bluetooth now goes through a small built-in BlueZ client on `@homebridge/dbus-native`** (the D-Bus library Homebridge already installs) instead of `node-ble`. Nothing to change in your config. This removes all 11 `npm audit` findings, the deprecated-package warnings, and the `usocket` `gyp ERR!` from npm install logs.
-- If the kettle drops the link while BlueZ is still discovering its services, the connect attempt now fails at once instead of waiting 30 s.
+- If the kettle drops the link while the plugin is still connecting, the attempt now fails at once instead of waiting 30 s or reporting a connection that is already gone.
+- Bluetooth events are accepted only from BlueZ itself. Another program on the host's system bus can no longer feed the plugin fake kettle status or fake disconnects.
 - If the connection to the system D-Bus itself is lost, the plugin now treats it as a dropped link and reconnects right away, instead of waiting for status polls to fail.
 
 ## 0.2.0-beta.1 (2026-09-25)

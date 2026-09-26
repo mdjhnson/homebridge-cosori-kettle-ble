@@ -76,12 +76,10 @@ function openSession(options: Pick<BluezTransportOptions, 'dbusAddress' | 'openB
   return (options.openBus ?? openBus)(address, (message) => log.debug(message));
 }
 
+const ADAPTER_LOOKUP = 'BlueZ adapter lookup (is bluetoothd running on the host?)';
+
 async function lookupAdapter(bus: Bus, wanted: string | undefined): Promise<AdapterSelection<BluezAdapter>> {
-  const label = 'BlueZ adapter lookup (is bluetoothd running on the host?)';
-  return Promise.race([
-    withTimeout(managedObjects(bus, label).then((objects) => selectAdapter(adapterSource(objects), wanted)), CALL_TIMEOUT_MS, label),
-    bus.failure,
-  ]);
+  return selectAdapter(adapterSource(await managedObjects(bus, ADAPTER_LOOKUP)), wanted);
 }
 
 function poweredOffError(selection: AdapterSelection<unknown>): Error {
@@ -130,6 +128,9 @@ export class BluezTransport extends EventEmitter implements KettleTransport {
   private resolvedWriteType: 'request' | 'command' = 'request';
   private isConnected = false;
   private closing = false;
+  /** Set while connect() runs; a drop then only marks `lostDuringConnect`, and connect() fails and cleans up. */
+  private connecting = false;
+  private lostDuringConnect = false;
   private adapterNote?: string;
   /** Watchers for the device's Connected / ServicesResolved properties while connecting. */
   private readonly deviceEvents = new EventEmitter();
@@ -226,13 +227,18 @@ export class BluezTransport extends EventEmitter implements KettleTransport {
       await stopDiscoverySafe(bus, adapter);
     }
     this.devicePath = path;
+    this.connecting = true;
+    this.lostDuringConnect = false;
 
     try {
       // Subscribe before connecting so no Connected / ServicesResolved change is missed.
       this.unsubscribes.push(await bus.subscribe(propertiesChanged(path), (body) => this.onDeviceProperties(body)));
       await bluezCall(bus, path, DEVICE_IFACE, 'Connect', this.options.connectTimeoutMs ?? 30_000, 'BLE connect');
+      // A signal that arrives in the same socket read as a reply is handled before the await resumes.
+      this.failIfLost('connect');
       await this.waitServicesResolved(bus, path, this.options.gattTimeoutMs ?? 30_000);
       const objects = await managedObjects(bus);
+      this.failIfLost('GATT service discovery');
       const servicePath = findServicePath(objects, path, SERVICE_UUID);
       if (!servicePath) {
         throw new Error(`service ${SERVICE_UUID} not found — is ${this.mac} really a Cosori kettle?`);
@@ -245,12 +251,21 @@ export class BluezTransport extends EventEmitter implements KettleTransport {
       this.tx = tx;
       this.resolvedWriteType = this.pickWriteType(tx.flags);
       await this.startNotify(bus, rx);
+      this.failIfLost('notification setup');
       this.isConnected = true;
       this.log.debug(`Connected to ${this.mac} (TX write type: ${this.resolvedWriteType})`);
     } catch (err) {
       // Disconnect also cancels a Connect that BlueZ is still attempting.
       await this.cleanup(true);
       throw err;
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private failIfLost(phase: string): void {
+    if (this.lostDuringConnect) {
+      throw new Error(`${this.mac} disconnected during ${phase}`);
     }
   }
 
@@ -263,8 +278,12 @@ export class BluezTransport extends EventEmitter implements KettleTransport {
       this.deviceEvents.emit('servicesResolved');
     }
     if (changed.Connected === false) {
-      this.deviceEvents.emit('disconnected');
-      this.handleUnexpectedDisconnect();
+      if (this.connecting) {
+        this.lostDuringConnect = true;
+        this.deviceEvents.emit('disconnected');
+      } else {
+        this.handleUnexpectedDisconnect();
+      }
     }
   }
 
@@ -280,7 +299,10 @@ export class BluezTransport extends EventEmitter implements KettleTransport {
     });
     resolved.catch(() => undefined);
     try {
-      if (await getProperty(bus, path, DEVICE_IFACE, 'ServicesResolved') === true) {
+      this.failIfLost('GATT service discovery');
+      const already = await getProperty(bus, path, DEVICE_IFACE, 'ServicesResolved') === true;
+      this.failIfLost('GATT service discovery');
+      if (already) {
         return;
       }
       await withTimeout(Promise.race([resolved, bus.failure]), timeoutMs, 'GATT service discovery');
@@ -429,9 +451,7 @@ export class BluezTransport extends EventEmitter implements KettleTransport {
   static async listAdapters(options: Pick<BluezTransportOptions, 'dbusAddress' | 'log' | 'openBus'> = {}): Promise<AdapterInfo[]> {
     const bus = await openSession(options, options.log ?? silentLogger);
     try {
-      const label = 'BlueZ adapter lookup (is bluetoothd running on the host?)';
-      const objects = await Promise.race([withTimeout(managedObjects(bus, label), CALL_TIMEOUT_MS, label), bus.failure]);
-      const found = await describeAdapters(adapterSource(objects));
+      const found = await describeAdapters(adapterSource(await managedObjects(bus, ADAPTER_LOOKUP)));
       return found.map(({ info, adapter }) => ({ ...info, powered: adapter.powered }));
     } finally {
       bus.close();

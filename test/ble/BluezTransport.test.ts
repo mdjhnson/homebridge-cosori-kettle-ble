@@ -92,6 +92,7 @@ describe('BluezTransport.connect', () => {
     expect(fake.calls.find((c) => c.member === 'Disconnect')?.path).toBe(DEVICE_PATH);
     expect(transport.connected).toBe(false);
     expect(fake.subscriptionCount()).toBe(0);
+    expect(fake.members().filter((m) => m === 'RemoveMatch')).toHaveLength(fake.members().filter((m) => m === 'AddMatch').length);
   });
 
   it('passes a BlueZ connect error through, with its D-Bus name', async () => {
@@ -124,6 +125,41 @@ describe('BluezTransport.connect', () => {
     const started = Date.now();
     await expect(transport.connect()).rejects.toThrow('disconnected during GATT service discovery');
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('fails at once when the drop arrives in the same socket read as the Connect reply', async () => {
+    const fake = new FakeBluez();
+    fake.autoResolve = false;
+    fake.overrides.set('Connect', () => {
+      // Delivered synchronously, before the transport's await on Connect resumes.
+      fake.setProp(DEVICE_PATH, 'org.bluez.Device1', 'Connected', ['b', true]);
+      fake.dropLink();
+      return [];
+    });
+    const { transport } = setup(fake, { gattTimeoutMs: 5_000 });
+    const started = Date.now();
+    await expect(transport.connect()).rejects.toThrow('FC:58:FA:0F:C3:26 disconnected during connect');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(transport.connected).toBe(false);
+  });
+
+  it('does not report connected when the drop arrives with the StartNotify reply', async () => {
+    const fake = new FakeBluez();
+    fake.overrides.set('StartNotify', () => {
+      fake.dropLink();
+      return [];
+    });
+    const { transport } = setup(fake);
+    let disconnects = 0;
+    transport.on('disconnect', () => disconnects++);
+    await expect(transport.connect()).rejects.toThrow('disconnected during notification setup');
+    expect(transport.connected).toBe(false);
+    expect(disconnects).toBe(0);
+    expect(fake.subscriptionCount()).toBe(0);
+    // The transport can connect again afterwards.
+    fake.overrides.delete('StartNotify');
+    await transport.connect();
+    expect(transport.connected).toBe(true);
   });
 
   it('reports a device without the kettle service', async () => {

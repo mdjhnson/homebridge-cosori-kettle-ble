@@ -2,7 +2,9 @@ import { createRequire } from 'node:module';
 
 import type { Bus, DbusValue, MethodCall, SignalHandler, SignalMatch } from '../../src/ble/dbus.js';
 import { DbusError } from '../../src/ble/dbus.js';
+import { ETEKCITY_COMPANY_ID, fromHex } from '../../src/protocol/index.js';
 import { TimeoutError } from '../../src/util/async.js';
+import { OWN_KETTLE_MANUFACTURER_DATA } from '../fixtures/captures.js';
 
 const require = createRequire(import.meta.url);
 const marshall = require('@homebridge/dbus-native/lib/marshall.js') as (signature: string, data: DbusValue[], offset: number) => Buffer;
@@ -24,8 +26,8 @@ export const DEVICE_PATH = `${ADAPTER_PATH}/dev_FC_58_FA_0F_C3_26`;
 export const RX_PATH = `${DEVICE_PATH}/service000c/char000d`;
 export const TX_PATH = `${DEVICE_PATH}/service000c/char0010`;
 
-/** The kettle's advertised manufacturer data after the 0x06D0 company id (FUTURE-WORK §1b capture). */
-export const KETTLE_MANUFACTURER_DATA = Buffer.from('0126c30ffa58fcc2d4030102', 'hex');
+/** The kettle's advertised manufacturer data after the 0x06D0 company id (real capture). */
+export const KETTLE_MANUFACTURER_DATA = fromHex(OWN_KETTLE_MANUFACTURER_DATA);
 
 function uuid16(short: string): string {
   return `0000${short}-0000-1000-8000-00805f9b34fb`;
@@ -38,7 +40,7 @@ export function kettleDevice(): Record<string, Record<string, Prop>> {
       Name: ['s', 'Cosori Gooseneck Kettle'],
       Adapter: ['o', ADAPTER_PATH],
       RSSI: ['n', -80],
-      ManufacturerData: ['a{qv}', [[0x06d0, ['ay', KETTLE_MANUFACTURER_DATA]]]],
+      ManufacturerData: ['a{qv}', [[ETEKCITY_COMPANY_ID, ['ay', KETTLE_MANUFACTURER_DATA]]]],
       Connected: ['b', false],
       ServicesResolved: ['b', false],
     },
@@ -217,10 +219,12 @@ export class FakeBluez implements Bus {
   async subscribe(match: SignalMatch, handler: SignalHandler): Promise<() => void> {
     const entry = { match, handler };
     this.subscriptions.add(entry);
-    const addMatch = { destination: 'org.freedesktop.DBus', path: '/org/freedesktop/DBus', interface: 'org.freedesktop.DBus', member: 'AddMatch' };
-    await this.call(addMatch, 5_000, 'AddMatch');
+    const bus = { destination: 'org.freedesktop.DBus', path: '/org/freedesktop/DBus', interface: 'org.freedesktop.DBus' };
+    await this.call({ ...bus, member: 'AddMatch' }, 5_000, 'AddMatch');
     return () => {
-      this.subscriptions.delete(entry);
+      if (this.subscriptions.delete(entry)) {
+        this.calls.push({ ...bus, member: 'RemoveMatch' });
+      }
     };
   }
 
