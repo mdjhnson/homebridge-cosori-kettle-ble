@@ -357,7 +357,7 @@ If you still want to use the VeSync app, set `connectionMode` to `onDemand`: the
 | `kettle rejected the registration key` | Wrong key. Re-capture it (Option A) or pair (Option B). |
 | `not in pairing mode` | Hold the MyBrew button until the kettle signals pairing mode, then retry. |
 | Temperature reads 1–3 °F below the setpoint while holding | Normal kettle behaviour. |
-| `usocket@0.3.0 install` … `gyp ERR! Completion callback never invoked!` in an npm install log (for example when installing or updating any plugin) | Harmless, and no longer caused by this plugin from the version after 0.2.0-beta.1. `usocket` was an optional native dependency of `node-ble`, which 0.2.0-beta.1 and earlier used; its bundled node-gyp 7 can't build on Node 24, so npm skipped it and the install succeeded. If you still see it after updating, another plugin in `/homebridge` pulls in `usocket`. |
+| `usocket@0.3.0 install` … `gyp ERR! Completion callback never invoked!` in an npm install log (for example when installing or updating any plugin) | Harmless, and no longer caused by this plugin from 0.3.0-beta.1 on. `usocket` was an optional native dependency of `node-ble`, which 0.2.0-beta.1 and earlier used; its bundled node-gyp 7 can't build on Node 24, so npm skipped it and the install succeeded. If you still see it after updating, another plugin in `/homebridge` pulls in `usocket`. |
 
 ### Occasional disconnects
 
