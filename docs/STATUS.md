@@ -4,6 +4,7 @@ _Last updated: 2026-09-25 (late evening, US Central)._
 
 ## Released
 
+- **`0.3.0-beta.1` is on npm** (2026-09-25, from `main` at `697d61b`; staged by `release.yml`, approved with 2FA), with `latest` and `next` both on it. It replaces `node-ble` with the built-in BlueZ client (PR #11): `npm audit --omit=dev` 0, no `usocket` `gyp ERR!`. GitHub release `v0.3.0-beta.1`.
 - **`0.2.0-beta.1` is on npm** (published 2026-09-25 from `main` at `57ae33b`), under `next`. npm also pointed `latest` at it, as it does for a package's first version. `latest` doesn't move with later pre-releases, so until the first stable version each beta needs `npm dist-tag add … latest` after approval (`docs/RELEASING.md`, "Each release" step 5). Otherwise plain installs and the Homebridge UI stay on beta.1. The GitHub release `v0.2.0-beta.1` holds the notes.
 - The one-time setup in `docs/RELEASING.md` is done: first publish by hand, trusted publisher for `release.yml` with staged publishing only, and publishing access set to "require 2FA and disallow tokens". Every later version goes through "Each release" there: a version-bump PR, a GitHub release, then `npm stage approve` with 2FA.
 
@@ -18,12 +19,12 @@ _Last updated: 2026-09-25 (late evening, US Central)._
 
 ## Deployed on the Pi
 
-- **Branch build of PR #11 (`feat/bluez-transport`, node-ble replaced), `580f604`**, installed 2026-09-25 23:29 from a tarball, still labelled `0.2.0-beta.1` (`/homebridge/package.json` points at the tarball file until the next npm release). Before it, the first commit `07a272a` ran from 22:51. Config backed up each time (`config.json.bak-before-bluez-20260925-225044`, `…-bluez2-20260925-232858`), and only the Kettle child bridge was restarted.
+- **`0.3.0-beta.1` from npm**, installed 2026-09-25 23:42 (replacing the PR #11 branch tarball; `/homebridge/package.json` has `^0.3.0-beta.1`, old tarballs removed). Config backed up first (`config.json.bak-before-npm-0.3.0-beta.1-20260925-234240`). Only the Kettle child bridge was restarted: it reported plugin v0.3.0-beta.1 and connected in 2.1 s.
+- Before that: **branch build of PR #11 (`feat/bluez-transport`, node-ble replaced), `580f604`**, installed 2026-09-25 23:29 from a tarball labelled `0.2.0-beta.1`. Before it, the first commit `07a272a` ran from 22:51. Config backed up each time (`config.json.bak-before-bluez-20260925-225044`, `…-bluez2-20260925-232858`), and only the Kettle child bridge was restarted.
   - The install was clean, with no `gyp ERR!`, and `node-ble` and `dbus-next` are gone. `cosori-probe adapters` and `scan` work.
   - Both builds connected in 1.9 s, and the kettle accepted the hello. On `580f604` that also proves the new signal-sender check lets BlueZ's notifications through.
   - On `07a272a`: no drops from 22:51 to 23:29. Green Tea on at 23:01:51 and off at 23:01:59 from the Home app both went through, and the status updates reached HomeKit (Keep Warm followed).
   - Seen during that test: each tap arrived as 3–4 HomeKit SET requests (log lines "Kettle: Green Tea (180°F)" ×4, "stop Green Tea" ×3), and the Green Tea and Keep Warm tiles went off and on. This comes from the HAP layer, not the transport; see Open issue 7.
-  - Roll back: `docker exec homebridge npm install --prefix /homebridge homebridge-cosori-kettle-ble@0.2.0-beta.1`, then restart only the Kettle child bridge.
 - Before that: **`0.2.0-beta.1` from npm**, installed 2026-09-25 22:10 (first install from npm, replacing the tarball; `/homebridge/package.json` now has `^0.2.0-beta.1`). Config backed up first (`config.json.bak-before-npm-beta1-20260925-221019`), and `delayStartMinutes` and `accessories.delayStartSwitch` removed with `jq` (no Delay Start warning on start). Only the Kettle child bridge was restarted (22:10, again at 22:17). The kettle was already in the outage described in Open issue 1 ("Third occurrence"), and it connected at 22:22:31.
 - Before that: plugin v0.1.0 with the code of `main` at `50ce5b3` (PRs #3 and #4 merged 2026-09-25), installed 2026-09-25 00:48. New since the last install: the MyBrew-mode target fix (`61c645d`, Open issue 6). Config backed up first (`config.json.bak-before-mybrew-fix-20260925-004742`). Only the Kettle child bridge was restarted: it started at 00:48:04 and connected in 2.0 s.
 - Earlier: `main` at `b695c12` (PR #1, temperature switches, with the second round of review fixes `1119d2c`), installed 2026-09-25 00:14, which brought the temperature switches, the reconnect logging (`5a682e3`) and adapter selection by MAC (`f3b36ef`). On PR #1's branch: first install `a65a434` (2026-09-24 23:30; migration notes logged, tiles Green Tea, Coffee, Boil carried over, MyBrew removed), then review fixes `85ed8b7` (23:56).
@@ -83,5 +84,5 @@ _Last updated: 2026-09-25 (late evening, US Central)._
 1. Open issue 1: follow its plan (reconnect logging deployed 2026-09-24; measure drops and their HomeKit impact during normal use, then decide).
 2. Finish the Checkpoint C list. Done 2026-09-25: heat and off via the dial (including retargeting while heating), Keep Warm holding after the heat finished, and a preset switch (Green Tea, from a Home app automation). Still to do: On Base. The Delay Start switch was removed instead of tested (FUTURE-WORK §2).
 3. ~~Install `0.2.0-beta.1` on the Pi from npm.~~ **Done 2026-09-25 22:10** (see "Deployed on the Pi"). Still to check: that the Delay Start tile is gone from the Home app.
-4. Replace `node-ble` (FUTURE-WORK §3b). **Built on `feat/bluez-transport` (PR #11), reviewed, and running on the Pi since 23:29** (`npm audit --omit=dev`: 0, was 11). Next: merge, release `0.3.0-beta.1`, and move the Pi to it from npm.
+4. ~~Replace `node-ble` (FUTURE-WORK §3b).~~ **Done:** PR #11, released as `0.3.0-beta.1` and running on the Pi from npm since 2026-09-25 23:42.
 5. Open issue 7: find out why one Home app tap arrives as several SET requests.
