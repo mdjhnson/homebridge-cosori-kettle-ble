@@ -1,25 +1,26 @@
 # Releasing
 
-Releases go to npm as `homebridge-cosori-kettle-ble`, built and staged by GitHub Actions through trusted publishing (OIDC, no token in the repo). A staged version goes live only after the maintainer approves it with 2FA, so a compromised workflow can't publish on its own.
+Releases go to npm as `homebridge-cosori-kettle-ble`. Publishing a GitHub release makes GitHub Actions build the package and stage it on npm through trusted publishing (OIDC, no token in the repo). A staged version goes live only after the maintainer approves it with 2FA, so a compromised workflow can't publish on its own.
 
 ## Each release (from the browser)
 
 1. **Actions → Prepare release → Run workflow.** Leave *Version* empty for the next beta (`0.3.0-beta.2` → `0.3.0-beta.3`), or type one (`0.4.0-beta.1`, `1.0.0`). Tick *Dry run* to only see the changes. The workflow bumps `package.json` and `package-lock.json`, turns the `## Unreleased` notes in `CHANGELOG.md` into the new version's section (or uses GitHub's generated notes, the merged PRs, if there are none), and pushes the branch `release/v<version>`.
-2. **Open the pull request** from the link in the run's summary (the title and description are filled in), click *Create pull request*, and **merge** it once CI passes. `main` only takes changes through pull requests, which is why the workflow stops at a branch.
-3. **The merge runs the Release workflow** (`.github/workflows/release.yml`). It runs lint, typecheck, build and tests, **stages** the version on npm, then creates the tag `v<version>` and the GitHub release with the CHANGELOG section as notes.
-4. **Approve** the staged version with 2FA on npmjs.com: the package → *Staged Packages* tab. (Or in a terminal: `npm login`, `npm stage list homebridge-cosori-kettle-ble`, then `npm stage approve <stage-id>`.) Reject a bad one there, or with `npm stage reject <stage-id>`.
-5. **Deploy to the Pi.** Back up `config.json` first. Install the exact version, then restart **only the Kettle child bridge**:
+2. **Open the pull request** from the link in the run's summary (the title and description are filled in), click *Create pull request*, and **merge** it once CI passes. `main` only takes changes through pull requests, which is why the workflow stops at a branch. Merging doesn't release anything by itself.
+3. **Publish the GitHub release** from the second link in the run's summary (it's in the PR description too). It opens the new-release form filled in: tag `v<version>` on `main`, the title, the CHANGELOG section as notes, and *Set as a pre-release* ticked for a beta. Click *Publish release*.
+4. **Publishing runs the Release workflow** (`.github/workflows/release.yml`). It checks the tag against `package.json`, runs lint, typecheck, build and tests, and **stages** the version on npm.
+5. **Approve** the staged version with 2FA on npmjs.com: the package → *Staged Packages* tab. (Or in a terminal: `npm login`, `npm stage list homebridge-cosori-kettle-ble`, then `npm stage approve <stage-id>`.) Reject a bad one there, or with `npm stage reject <stage-id>`.
+6. **Deploy to the Pi.** Back up `config.json` first. Install the exact version, then restart **only the Kettle child bridge**:
    ```sh
    docker exec homebridge npm install --prefix /homebridge homebridge-cosori-kettle-ble@<version>
    ```
 
 **Dist-tags:** a stable version goes to `latest`. A pre-release goes to `next`, except while npm has no stable version: then it goes to `latest` too, so plain installs and the Homebridge UI get the newest beta without a manual `npm dist-tag` step. (Until `0.3.0-beta.2`, betas went to `next` and `latest` was moved by hand, so `next` stops following new betas until the first stable version.)
 
-**Checks the workflow makes:** Prepare release refuses a version that is already on `main`, tagged, on npm, or has a `release/v…` branch. The Release workflow skips a push that changes `package.json` without a new version (a dependency update), and skips staging a version that is already on npm (it still creates a missing GitHub release).
+**Checks:** Prepare release refuses a version that is already on `main`, tagged, on npm, or has a `release/v…` branch. The Release workflow refuses a tag that isn't `v` + the `package.json` version on the release's commit, or a *pre-release* checkbox that doesn't match the version, and skips staging a version that is already on npm.
 
-**Retry:** if the Release workflow fails after the merge (npm down, say), fix the cause and run it by hand: Actions → Release → Run workflow, on `main`.
+**If the Release workflow fails** (npm down, say): fix the cause, then open the failed run and click *Re-run jobs*. If the release itself was wrong (wrong tag, say), delete the GitHub release and its tag, then publish it again.
 
-**A version bump made by hand** (a PR with `npm version <version> --no-git-tag-version` and a CHANGELOG section) is released the same way: merging it runs the Release workflow. Don't also publish a GitHub release for it. Publishing a GitHub release by hand still triggers the workflow (the tag must be `v` + the `package.json` version, and *Set as a pre-release* must match), but that's only needed for a version on `main` that was never released.
+**Without the button:** bump the version in a PR yourself (`npm version <version> --no-git-tag-version`, plus a CHANGELOG section), merge it, then publish a GitHub release from `main` with the tag `v<version>` (tick *Set as a pre-release* for a beta). It's the same from step 3 on.
 
 A branch can still be tested on the Pi before a release with a tarball (`npm pack`; see README "Install").
 
