@@ -297,7 +297,7 @@ export class KettleClient extends EventEmitter<Events> {
         clearTimeout(p.timer);
         this.pending.delete(seq);
       }
-      throw this.transport.connected ? new WriteFailedError(err) : new NotConnectedError();
+      throw this.transport.connected ? new WriteFailedError(err) : new NotConnectedError(err);
     }
     return reply;
   }

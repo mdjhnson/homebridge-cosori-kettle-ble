@@ -449,6 +449,35 @@ describe('KettleAccessory commands', () => {
     await until(() => lastSent(Cmd.SET_MODE)!.payload[4] === Mode.GREEN_TEA);
   });
 
+  it('a scene with one switch on and another off heats and does not stop', async () => {
+    const { sub, sentCmds } = await setup();
+    // A Home scene stores every tile: Boil on, Green Tea off. The Heat is still pending when the Off arrives.
+    await sub(S.Switch, 'preset-boil')!.getCharacteristic(C.On).handleSetRequest(true);
+    await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleSetRequest(false);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(sentCmds()).toEqual([Cmd.SET_MODE]);
+  });
+
+  it('a switch Heat waiting to be resent is followed by a target set in the meantime', async () => {
+    const { fake, sub, thermostat, lastSent } = await setup();
+    const respond = fake.respond;
+    let dropped = false;
+    fake.respond = (frame, f) => {
+      if (frame.payload[1] === Cmd.SET_MODE && !dropped) {
+        dropped = true;
+        f.connectError = new Error('le-connection-abort-by-local');
+        f.drop();
+        return;
+      }
+      respond(frame, f);
+    };
+    await sub(S.Switch, 'preset-greenTea')!.getCharacteristic(C.On).handleSetRequest(true);
+    await until(() => dropped);
+    await thermostat().getCharacteristic(C.TargetTemperature).handleSetRequest(100); // 212 °F, Boil
+    fake.connectError = undefined;
+    await until(() => lastSent(Cmd.SET_MODE)!.payload[4] === Mode.BOIL);
+  });
+
   it('shows a delayed start set elsewhere (the VeSync app) as not heating', async () => {
     const { thermostat } = await setup({ status: payload(OWN_KETTLE_FRAMES.extendedScheduled297) });
     expect(await thermostat().getCharacteristic(C.CurrentHeatingCoolingState).handleGetRequest()).toBe(C.CurrentHeatingCoolingState.OFF);

@@ -1,13 +1,16 @@
 export class KettleError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
   }
 }
 
+const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+
+/** `cause`: the error that showed the link was gone (e.g. a failed write), kept for logs and hints. */
 export class NotConnectedError extends KettleError {
-  constructor() {
-    super('kettle is not connected');
+  constructor(cause?: unknown) {
+    super(cause === undefined ? 'kettle is not connected' : `kettle is not connected (${causeMessage(cause)})`, cause === undefined ? undefined : { cause });
   }
 }
 
@@ -23,7 +26,7 @@ export class AckTimeoutError extends KettleError {
  */
 export class WriteFailedError extends KettleError {
   constructor(cause: unknown) {
-    super(`write to the kettle failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    super(`write to the kettle failed: ${causeMessage(cause)}`, { cause });
   }
 }
 

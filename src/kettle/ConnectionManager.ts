@@ -154,11 +154,6 @@ export class ConnectionManager extends EventEmitter<Events> {
     return this.everConnected || this.consecutiveConnectFailures > 0 ? now - this.downSince : 0;
   }
 
-  /** Whether a command is queued or running (so the cached status may be about to change). */
-  get busy(): boolean {
-    return this.pendingCommands > 0;
-  }
-
   get registrationKeyRejected(): boolean {
     return this.keyRejected;
   }
@@ -226,10 +221,15 @@ export class ConnectionManager extends EventEmitter<Events> {
           this.nextPollAt = 0;
           this.wake();
           const message = `${label}: kettle lost the link and did not reconnect within ${formatDuration(windowMs)}`;
-          await this.waitReady(windowMs, message, attemptOn).catch((waitErr: unknown) => {
+          const outcome = await this.waitForResend(windowMs, message, attemptOn).catch((waitErr: unknown) => {
             // Still on the same link: the kettle just didn't answer, so report that instead.
             throw this.ready && this.connectionId === attemptOn ? err : waitErr;
           });
+          if (outcome === 'same-link') {
+            // The kettle answered on the link the command failed on, so the link is fine and the
+            // command simply went unanswered (KettleClient already sent it twice): report that.
+            throw err;
+          }
           this.log.info(`Sending "${label}" again: the link dropped before the kettle confirmed it`);
           result = await fn(this.client);
         }
@@ -246,14 +246,64 @@ export class ConnectionManager extends EventEmitter<Events> {
   // ---------------------------------------------------------------------------------------------
 
   /**
-   * Resolve once the kettle is connected and authenticated. With `after`, wait for a connection newer
-   * than that one (the link a command just failed on may not have been declared dead yet).
+   * After a command failed on connection `after`: resolve 'reconnected' once a newer connection is
+   * ready (the old one may not have been declared dead yet), or 'same-link' as soon as the kettle
+   * reports a status on the old one. Rejects after timeoutMs.
    */
-  private waitReady(timeoutMs: number, timeoutMessage: string, after?: number): Promise<void> {
+  private waitForResend(timeoutMs: number, timeoutMessage: string, after: number): Promise<'reconnected' | 'same-link'> {
     if (this.shuttingDown) {
       return Promise.reject(new KettleUnavailableError('plugin is shutting down'));
     }
-    if (this.ready && (after === undefined || this.connectionId > after)) {
+    if (this.ready && this.connectionId > after) {
+      return Promise.resolve('reconnected');
+    }
+    if (this.keyRejected) {
+      return Promise.reject(new KettleUnavailableError('the kettle rejected the registration key; check "registrationKey" in the config'));
+    }
+    return new Promise((resolve, reject) => {
+      let timer: NodeJS.Timeout | undefined = undefined;
+      let waiter: { resolve: () => void; reject: (err: Error) => void } | undefined = undefined;
+      let onStatus: (() => void) | undefined = undefined;
+      const done = () => {
+        clearTimeout(timer);
+        if (waiter) {
+          this.waiters.delete(waiter);
+        }
+        if (onStatus) {
+          this.client.off('status', onStatus);
+        }
+      };
+      waiter = {
+        resolve: () => {
+          done();
+          resolve('reconnected');
+        },
+        reject: (e: Error) => {
+          done();
+          reject(e);
+        },
+      };
+      onStatus = () => {
+        if (this.ready && this.connectionId === after) {
+          done();
+          resolve('same-link');
+        }
+      };
+      timer = setTimeout(() => {
+        done();
+        reject(new KettleUnavailableError(timeoutMessage));
+      }, Math.max(0, timeoutMs));
+      this.waiters.add(waiter);
+      this.client.on('status', onStatus);
+    });
+  }
+
+  /** Resolve once the kettle is connected and authenticated. */
+  private waitReady(timeoutMs: number, timeoutMessage: string): Promise<void> {
+    if (this.shuttingDown) {
+      return Promise.reject(new KettleUnavailableError('plugin is shutting down'));
+    }
+    if (this.ready) {
       return Promise.resolve();
     }
     if (this.keyRejected) {

@@ -199,22 +199,24 @@ describe('ConnectionManager commands across a dropped link', () => {
   });
 
   it('waits for a new link when the kettle went silent before the drop was noticed', async () => {
-    // Both sends time out (KettleClient retries once) while the link still looks up; BlueZ ends it later.
-    let ignoreStops = true;
+    // The kettle goes silent (polls too): both sends time out (KettleClient retries once) while the
+    // link still looks up, and BlueZ only ends it later.
+    let silent = false;
     const base = kettle();
     const { fake, manager } = setup((frame, f) => {
-      if (frame.payload[1] === Cmd.STOP && ignoreStops) {
+      if (silent && frame.payload[1] !== Cmd.HELLO) {
         return;
       }
       base(frame, f);
     });
     manager.start();
     await until(() => manager.connected);
+    silent = true;
     const p = manager.run('stop', (c) => c.stop());
     await until(() => commandsSent(fake, Cmd.STOP) === 2);
     await new Promise((r) => setTimeout(r, 80)); // second ACK timeout (50 ms) has passed
     expect(commandsSent(fake, Cmd.STOP)).toBe(2); // no third send on the same link
-    ignoreStops = false;
+    silent = false;
     fake.drop();
     await p;
     expect(commandsSent(fake, Cmd.STOP)).toBe(3);
@@ -223,12 +225,21 @@ describe('ConnectionManager commands across a dropped link', () => {
 
   it('treats a failed write as a dying link: sent again once BlueZ ends it and the kettle is back', async () => {
     const log = captureLog();
-    const { fake, manager } = setup(kettle(), { log });
+    let silent = false;
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (silent && frame.payload[1] !== Cmd.HELLO) {
+        return;
+      }
+      base(frame, f);
+    }, { log });
     manager.start();
     await until(() => manager.connected);
+    silent = true; // a dying link: nothing gets through, and the write times out
     fake.nextWriteError = new Error('GATT write timed out after 5000 ms');
     const p = manager.run('stop', (c) => c.stop());
     await until(() => log.lines.some((l) => /write to the kettle failed: GATT write timed out/.test(l.message)));
+    silent = false;
     fake.drop();
     await p;
     expect(commandsSent(fake, Cmd.STOP)).toBe(1); // the failed write never reached the kettle
@@ -248,17 +259,34 @@ describe('ConnectionManager commands across a dropped link', () => {
     expect(settled.map((r) => (r.status === 'rejected' ? (r.reason as Error).message : 'ok'))).toEqual(['plugin is shutting down', 'plugin is shutting down']);
   });
 
-  it('reports the missing ACK when the link never dropped', async () => {
+  it('reports the missing ACK at once when the kettle still answers on the same link', async () => {
     const base = kettle();
     const { fake, manager } = setup((frame, f) => {
       if (frame.payload[1] !== Cmd.STOP) {
         base(frame, f);
       }
-    }, { resendWindowMs: 100 });
+    }, { resendWindowMs: 5_000 });
     manager.start();
     await until(() => manager.connected);
+    const started = Date.now();
     await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/no response from kettle/);
+    expect(Date.now() - started).toBeLessThan(1_000); // not the 5 s resend window
     expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+    expect(fake.connectCount).toBe(1);
+  });
+
+  it('keeps the BlueZ error as the cause when a write fails because the link is gone', async () => {
+    const { fake, client } = setup(kettle());
+    await client.connect();
+    const err = await (async () => {
+      fake.write = async () => {
+        fake.connected = false;
+        throw new Error('org.bluez.Error.Failed: Not connected');
+      };
+      return client.stop().catch((e: unknown) => e);
+    })();
+    expect(err).toMatchObject({ name: 'NotConnectedError', message: 'kettle is not connected (org.bluez.Error.Failed: Not connected)' });
+    expect((err as Error).cause).toBeInstanceOf(Error);
   });
 
   it('sends it only once more', async () => {
