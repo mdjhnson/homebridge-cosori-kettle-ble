@@ -5,15 +5,18 @@
  * - onDemand:   connect only for commands and for a slow periodic poll; stay connected while heating;
  *               disconnect after idleDisconnectMs so the VeSync app can connect in between.
  *
+ * Commands run one at a time, in the order they were issued. A command cut off by a dropped link is
+ * sent once more after the reconnect (see run()).
+ *
  * Nothing here throws into Homebridge: the loop catches everything and logs it.
  */
 import { EventEmitter } from 'node:events';
 
 import { Backoff, type BackoffOptions } from '../util/backoff.js';
-import { delay, errorMessage } from '../util/async.js';
+import { delay, errorMessage, Mutex } from '../util/async.js';
 import { type Logger } from '../util/log.js';
 import type { ConnectionMode } from '../config.js';
-import { InvalidRegistrationKeyError } from './errors.js';
+import { AckTimeoutError, InvalidRegistrationKeyError, NotConnectedError } from './errors.js';
 import type { DeviceInfo } from '../ble/Transport.js';
 import type { KettleClient, KettleStatus } from './KettleClient.js';
 
@@ -25,6 +28,11 @@ export interface ConnectionManagerOptions {
   idleDisconnectMs: number;
   /** How long a command waits for the kettle to become reachable (default 45 s). */
   commandTimeoutMs?: number;
+  /**
+   * How long a command cut off by a dropped link waits for the reconnect before it's sent once more
+   * (default 30 s). If the kettle isn't back by then, the command fails.
+   */
+  resendWindowMs?: number;
   /** Consecutive failed polls before the link is considered dead (default 3). */
   failuresBeforeReconnect?: number;
   backoff?: BackoffOptions;
@@ -52,6 +60,15 @@ export class KettleUnavailableError extends Error {
 }
 
 const DEFAULT_DOWN_WARNINGS_MS = [60_000, 300_000, 900_000, 1_800_000];
+
+/**
+ * Errors that mean the link went away under a command, not that the kettle refused it. After two
+ * unanswered sends (KettleClient retries once) the kettle may or may not have acted on it, which is
+ * fine: every command is a "set to this state", so sending it again is harmless.
+ */
+function isLinkFailure(err: unknown): boolean {
+  return err instanceof NotConnectedError || err instanceof AckTimeoutError;
+}
 
 /** "4.1 s", "12 min", "2 h 5 min". */
 export function formatDuration(ms: number): string {
@@ -85,6 +102,9 @@ export class ConnectionManager extends EventEmitter<Events> {
   private downWarningsGiven = 0;
   /** When the link was last lost (or the manager started without a link); 0 while connected. */
   private downSince = Date.now();
+  /** Counts successful connects, so a resend can wait for a new link rather than the one that failed. */
+  private connectionId = 0;
+  private readonly commands = new Mutex();
   private readonly waiters = new Set<{ resolve: () => void; reject: (err: Error) => void }>();
 
   constructor(private readonly client: KettleClient, private readonly options: ConnectionManagerOptions) {
@@ -164,18 +184,44 @@ export class ConnectionManager extends EventEmitter<Events> {
     await this.client.disconnect().catch(() => undefined);
   }
 
-  /** Run a command once the kettle is connected and authenticated. */
+  /**
+   * Run a command once the kettle is connected and authenticated. Commands run one at a time, in the
+   * order they were issued, and each waits at most commandTimeoutMs (from now) for the link.
+   *
+   * If the link drops under the command (it was never acknowledged), it's sent once more on the next
+   * connection, provided that comes within resendWindowMs. The queue keeps a later command (a Stop
+   * after a Heat, say) behind the resend, so the kettle still ends up in the last requested state.
+   */
   async run<T>(label: string, fn: (client: KettleClient) => Promise<T>): Promise<T> {
     this.pendingCommands++;
     this.lastActivityAt = Date.now();
     this.wake();
+    const deadline = Date.now() + (this.options.commandTimeoutMs ?? 45_000);
     try {
-      await this.waitReady(label);
-      const result = await fn(this.client);
-      this.lastActivityAt = Date.now();
-      this.nextPollAt = 0;
-      this.wake();
-      return result;
+      return await this.commands.run(async () => {
+        await this.waitReady(label, deadline - Date.now(), 'not reachable');
+        const attemptOn = this.connectionId;
+        let result: T;
+        try {
+          result = await fn(this.client);
+        } catch (err) {
+          if (!isLinkFailure(err) || this.stopped) {
+            throw err;
+          }
+          const windowMs = this.options.resendWindowMs ?? 30_000;
+          this.log.debug(`${label}: ${errorMessage(err)}; will send again after the reconnect`);
+          await this.waitReady(label, windowMs, 'lost the link and did not reconnect', attemptOn).catch((waitErr: unknown) => {
+            // Still on the same link: the kettle just didn't answer, so report that instead.
+            throw this.ready && this.connectionId === attemptOn ? err : waitErr;
+          });
+          this.log.info(`Sending "${label}" again: the link dropped before the kettle confirmed it`);
+          result = await fn(this.client);
+        }
+        this.lastActivityAt = Date.now();
+        this.nextPollAt = 0;
+        this.wake();
+        return result;
+      });
     } finally {
       this.pendingCommands--;
     }
@@ -183,14 +229,17 @@ export class ConnectionManager extends EventEmitter<Events> {
 
   // ---------------------------------------------------------------------------------------------
 
-  private waitReady(label: string): Promise<void> {
-    if (this.ready) {
+  /**
+   * Resolve once the kettle is connected and authenticated. With `after`, wait for a connection newer
+   * than that one (the link a command just failed on may not have been declared dead yet).
+   */
+  private waitReady(label: string, timeoutMs: number, reason: string, after?: number): Promise<void> {
+    if (this.ready && (after === undefined || this.connectionId > after)) {
       return Promise.resolve();
     }
     if (this.keyRejected) {
       return Promise.reject(new KettleUnavailableError('the kettle rejected the registration key; check "registrationKey" in the config'));
     }
-    const timeoutMs = this.options.commandTimeoutMs ?? 45_000;
     return new Promise<void>((resolve, reject) => {
       let timer: NodeJS.Timeout | undefined = undefined;
       const waiter = {
@@ -205,8 +254,8 @@ export class ConnectionManager extends EventEmitter<Events> {
       };
       timer = setTimeout(() => {
         this.waiters.delete(waiter);
-        reject(new KettleUnavailableError(`${label}: kettle not reachable within ${Math.round(timeoutMs / 1000)} s`));
-      }, timeoutMs);
+        reject(new KettleUnavailableError(`${label}: kettle ${reason} within ${Math.round(timeoutMs / 1000)} s`));
+      }, Math.max(0, timeoutMs));
       this.waiters.add(waiter);
     });
   }
@@ -224,6 +273,9 @@ export class ConnectionManager extends EventEmitter<Events> {
     }
     this.ready = ready;
     this.downSince = ready ? 0 : Date.now();
+    if (ready) {
+      this.connectionId++;
+    }
     this.emit('connection', ready);
     if (ready) {
       for (const w of this.waiters) {

@@ -170,6 +170,140 @@ describe('ConnectionManager (persistent)', () => {
   });
 });
 
+describe('ConnectionManager commands across a dropped link', () => {
+  const commandsSent = (fake: FakeTransport, cmd: number) => fake.sent.filter((f) => f.payload[1] === cmd).length;
+
+  /** A kettle that drops the link instead of answering the first `n` STOPs. */
+  function dropsOnStop(n: number): Responder {
+    let left = n;
+    const base = kettle();
+    return (frame, fake) => {
+      if (frame.payload[1] === Cmd.STOP && left > 0) {
+        left--;
+        fake.drop();
+        return;
+      }
+      base(frame, fake);
+    };
+  }
+
+  it('sends a command again after the reconnect when the link dropped under it', async () => {
+    const log = captureLog();
+    const { fake, manager } = setup(dropsOnStop(1), { log });
+    manager.start();
+    await until(() => manager.connected);
+    await manager.run('stop', (c) => c.stop());
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+    expect(fake.connectCount).toBe(2);
+    expect(log.lines).toContainEqual({ level: 'info', message: 'Sending "stop" again: the link dropped before the kettle confirmed it' });
+  });
+
+  it('waits for a new link when the kettle went silent before the drop was noticed', async () => {
+    // Both sends time out (KettleClient retries once) while the link still looks up; BlueZ ends it later.
+    let ignoreStops = true;
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.STOP && ignoreStops) {
+        return;
+      }
+      base(frame, f);
+    });
+    manager.start();
+    await until(() => manager.connected);
+    const p = manager.run('stop', (c) => c.stop());
+    await until(() => commandsSent(fake, Cmd.STOP) === 2);
+    await new Promise((r) => setTimeout(r, 80)); // second ACK timeout (50 ms) has passed
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2); // no third send on the same link
+    ignoreStops = false;
+    fake.drop();
+    await p;
+    expect(commandsSent(fake, Cmd.STOP)).toBe(3);
+    expect(fake.connectCount).toBe(2);
+  });
+
+  it('reports the missing ACK when the link never dropped', async () => {
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] !== Cmd.STOP) {
+        base(frame, f);
+      }
+    }, { resendWindowMs: 100 });
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/no response from kettle/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+  });
+
+  it('sends it only once more', async () => {
+    const { fake, manager } = setup(dropsOnStop(2));
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/not connected/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(2);
+  });
+
+  it('gives up when the kettle does not reconnect within the resend window', async () => {
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.STOP) {
+        f.connectError = new Error('not found');
+        f.drop();
+        return;
+      }
+      kettle()(frame, f);
+    }, { resendWindowMs: 100 });
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/^stop: kettle lost the link and did not reconnect/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(1);
+  });
+
+  it('does not resend a command the kettle refused', async () => {
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.STOP) {
+        f.ack(frame, [0x01]);
+        return;
+      }
+      base(frame, f);
+    });
+    manager.start();
+    await until(() => manager.connected);
+    await expect(manager.run('stop', (c) => c.stop())).rejects.toThrow(/rejected command/);
+    expect(commandsSent(fake, Cmd.STOP)).toBe(1);
+  });
+
+  it('keeps the issue order: a later command waits behind the resend', async () => {
+    let dropped = false;
+    const base = kettle();
+    const { fake, manager } = setup((frame, f) => {
+      if (frame.payload[1] === Cmd.SET_MODE && !dropped) {
+        dropped = true;
+        f.drop();
+        return;
+      }
+      base(frame, f);
+    });
+    manager.start();
+    await until(() => manager.connected);
+    // A custom temperature is two writes (F3, then F0); the Stop must not land between them.
+    const heat = manager.run('heat to 188°F', (c) => c.heatTo(188));
+    const stop = manager.run('stop', (c) => c.stop());
+    await Promise.all([heat, stop]);
+    const order = fake.sent.map((f) => f.payload[1]).filter((c) => c === Cmd.SET_MY_TEMP || c === Cmd.SET_MODE || c === Cmd.STOP);
+    expect(order).toEqual([Cmd.SET_MY_TEMP, Cmd.SET_MODE, Cmd.SET_MY_TEMP, Cmd.SET_MODE, Cmd.STOP]);
+  });
+
+  it('gives a queued command its own timeout, counted from when it was issued', async () => {
+    const { fake, manager } = setup(kettle(), { commandTimeoutMs: 100 });
+    fake.connectError = new Error('not found');
+    manager.start();
+    const started = Date.now();
+    const results = await Promise.allSettled([manager.run('a', (c) => c.stop()), manager.run('b', (c) => c.stop())]);
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(Date.now() - started).toBeLessThan(180);
+  });
+});
+
 describe('ConnectionManager (onDemand)', () => {
   it('does not connect until the first poll is due or a command arrives', async () => {
     const { fake, manager } = setup(kettle(), { mode: 'onDemand' });

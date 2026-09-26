@@ -289,6 +289,7 @@ For "every weekday at 6:30", create a Home app automation (*Automation → A Tim
 **Commands during a dropped connection.** A command never runs much later than you asked:
 - If the kettle has been unreachable for **more than 15 s**, the command is refused right away and HomeKit shows **No Response**. It is not queued.
 - If the connection dropped **less than 15 s** ago, the command waits for the reconnect for **up to 45 s**, then runs. If the kettle is still unreachable after 45 s, the command is dropped, the log records an error, and the switch turns back off.
+- If the connection drops **while a command is being sent** (the kettle goes silent for a few seconds before the drop is noticed), the command is sent once more after the reconnect, as long as that comes within 30 s. The log shows `Sending "Green Tea (180°F)" again: the link dropped before the kettle confirmed it`. Commands always reach the kettle in the order you sent them, so a Stop sent during the drop still wins over the Heat before it.
 - There's no retry after that. Note that HomeKit automations and Siri can't see a dropped command (the plugin answers HomeKit immediately, because a Bluetooth connection can take longer than HomeKit waits), so check the log if a scheduled kettle didn't heat.
 
 When the plugin cannot reach the kettle, its tiles show **No Response** after about 90 seconds (persistent mode).
@@ -368,7 +369,7 @@ Lost connection to the kettle; reconnecting
 Reconnected to the kettle after 4.1 s (1 attempt, last connect 1.2 s)
 ```
 
-HomeKit isn't affected by a short drop: it keeps showing the last status, and a command you send during a drop runs as soon as the link is back. Only when the kettle has been unreachable for more than 15 s does HomeKit show "No Response" for taps. If drops are frequent or long, use a USB Bluetooth adapter on an extension cable (see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter)) and keep the Pi on Ethernet or 5 GHz Wi-Fi.
+HomeKit isn't affected by a short drop: it keeps showing the last status, and a command you send during a drop, or that a drop cuts off, runs as soon as the link is back. Only when the kettle has been unreachable for more than 15 s does HomeKit show "No Response" for taps. If drops are frequent or long, use a USB Bluetooth adapter on an extension cable (see [Using a USB Bluetooth adapter](#using-a-usb-bluetooth-adapter)) and keep the Pi on Ethernet or 5 GHz Wi-Fi.
 
 ## Protocol notes
 
