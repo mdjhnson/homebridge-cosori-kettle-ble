@@ -2,6 +2,17 @@
 
 All notable changes to this plugin. Versions follow [semver](https://semver.org); while in `0.x`, a minor version may change the config or the Home app tiles.
 
+## 0.3.0-beta.2 (2026-09-26)
+
+Published under the `next` dist-tag.
+
+### Changes
+
+- **A command that a dropped Bluetooth link cuts off is now sent again after the reconnect.** On a weak link the kettle can go silent for a few seconds before the drop is noticed. A tap, a Siri request or an automation sent in that window used to fail and turn the switch back off. Now it's sent once more when the link is back, as long as that's within 30 s. The log shows `Sending "Green Tea (180°F)" again: the link dropped before the kettle confirmed it`.
+- **Commands reach the kettle one at a time, in the order you sent them.** A Stop sent while a Heat is still waiting goes after it, so the kettle ends up off. A new target temperature set while a Heat is waiting is sent after it, so that's the one it heats to. This also fixes a rare case where a command could land between the two writes of a custom-temperature heat.
+- When a Bluetooth write fails, the log now includes BlueZ's reason.
+- When Homebridge stops the plugin, commands still waiting fail at once instead of waiting for their timeout.
+
 ## 0.3.0-beta.1 (2026-09-25)
 
 Published under the `next` dist-tag.
