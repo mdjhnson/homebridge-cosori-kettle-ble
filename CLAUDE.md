@@ -1,12 +1,12 @@
 # CLAUDE.md — homebridge-cosori-kettle-ble
 
-Homebridge dynamic-platform plugin (TypeScript, ESM) that controls a **Cosori Smart Gooseneck Kettle** over BLE through BlueZ/D-Bus (a small in-house client on `@homebridge/dbus-native`), designed to run in the `homebridge/homebridge` Docker image. Repo: https://github.com/mdjhnson/homebridge-cosori-kettle-ble (public). Released to npm as `homebridge-cosori-kettle-ble` from GitHub releases (`docs/RELEASING.md`).
+Homebridge dynamic-platform plugin (TypeScript, ESM) that controls a **Cosori Smart Gooseneck Kettle** over BLE through BlueZ/D-Bus (a small in-house client on `@homebridge/dbus-native`), designed to run in the `homebridge/homebridge` Docker image. Repo: https://github.com/mdjhnson/homebridge-cosori-kettle-ble (public). Released to npm as `homebridge-cosori-kettle-ble` through GitHub Actions (`docs/RELEASING.md`).
 
 **Read first:**
 - `docs/STATUS.md`: current state, what's deployed, open issues, next steps.
 - `docs/PROTOCOL.md`: the verified protocol reference. Treat it as the source of truth over upstream docs.
 - `docs/FUTURE-WORK.md`: agreed ideas that are deliberately deferred.
-- `docs/RELEASING.md`: how a version gets to npm (GitHub release → staged → approved with 2FA).
+- `docs/RELEASING.md`: how a version gets to npm (Prepare release button → release PR → staged → approved with 2FA).
 - `docs/local/` (gitignored, may not exist): private deployment notes for the maintainer's Pi.
 
 ## Commands
@@ -46,7 +46,8 @@ Before every commit, run lint, typecheck, test and build, and **gate the commit 
 - **Upstream docs are wrong in places.** See `docs/PROTOCOL.md` ("Corrections to upstream"). Verify against captures, not prose.
 - **Any state-changing command on real hardware needs the user's go-ahead**, with water in the kettle when heating could happen. Prefer `--cancel-after` style tests that always clean up.
 - **Changes on the user's Pi:** ask before installs, config edits and restarts. Back up `config.json` first. For plugin updates, restart **only the kettle's child bridge**, never the whole container.
-- **Releases go through `docs/RELEASING.md` only:** a version-bump PR, then a GitHub release, then the maintainer approves the staged version. Never run `npm publish` yourself (the one-time first publish is the maintainer's), and never add an npm token to the repo or its secrets.
+- **Releases go through `docs/RELEASING.md` only:** the Prepare release workflow opens the way (a release branch and PR), merging the PR stages the version and creates the GitHub release, and the maintainer approves the staged version with 2FA. Never run `npm publish` yourself (the one-time first publish is the maintainer's), and never add an npm token to the repo or its secrets.
+- **Add user-facing changes to `CHANGELOG.md` under `## Unreleased`** in the same PR, written for plugin users. The release workflow turns that section into the next version's notes.
 - Keep HAP service names plain (letters, digits, spaces). HAP rejects names like `Boil (212°F)`.
 - Code style: follow the existing code (template eslint rules, 2-space indent, single quotes, curly braces always).
 
