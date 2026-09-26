@@ -50,7 +50,7 @@ These are ideas the maintainer has agreed are worth doing but has deliberately d
 | Thermostat (kettle) | ✓ / ✓ | ✓ | The main control: dial = target temperature, Heat/Off. Siri: "set the kettle to 205" |
 | On Base | ✓ / ✓ | ✓ | Occupancy sensor. Useful in automations |
 | Keep Warm | ✓ / ✓ | ✓ | Applies to the next heat, or changes the current one |
-| Delay Start | off / ✓ | off | Opt-in, unchanged |
+| Delay Start | off / ✓ | — | **Removed 2026-09-25** (see below) |
 | Temperature switches | Boil only / all 5 presets | **Green Tea, Oolong, Coffee, Boil** (prefilled list) | Editable list in the plugin settings, see below |
 
 The dial already covers any temperature, so switches are shortcuts: one tap or one Siri phrase ("turn on Green Tea"), and usable in scenes and automations.
@@ -105,7 +105,7 @@ Thermostat, On Base, Keep Warm, and whichever temperature switches you actually 
 3. **MyBrew:** dropped (migrates to a one-time log note).
 4. **Per-switch keep-warm:** no. One Keep Warm switch and one global time. Not planned.
 
-**Related, suggested (not decided): Delay Start.** A toggle with a fixed delay can't express "at 6:45". Siri timed requests ("at 11:15 pm turn on Green Tea") and Home app automations do that better. The kettle-side timer's only advantage is that it still fires if the Pi, Homebridge or the BLE link is down at that moment, while a HomeKit-scheduled command is refused after 15 s of outage. Suggestion: keep it as an opt-in (default off, as today), document the trade-off in the README, and turn it off in the maintainer's config.
+**Related, decided 2026-09-25: Delay Start removed.** A toggle with a fixed delay can't express "at 6:45". Siri timed requests ("at 11:15 pm turn on Green Tea") and Home app automations do that better, and the maintainer's 7:20 Green Tea automation worked on 2026-09-25. The kettle-side timer's only advantage was that it still fires if the Pi, Homebridge or the BLE link is down at that moment, while a HomeKit-scheduled command is refused after 15 s of outage. The maintainer chose to remove it anyway. A config with `accessories.delayStartSwitch: true` logs how to use an automation instead, and the tile is removed. `KettleClient.delayedStart()` and `cosori-probe delay` stay (protocol tools).
 
 ### Tests
 

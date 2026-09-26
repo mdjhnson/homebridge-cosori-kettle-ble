@@ -188,13 +188,6 @@ describe('KettleClient', () => {
     expect(client.status).toMatchObject({ stage: 5, scheduled: true, active: false });
   });
 
-  it('heatToLater picks a preset or schedules MyBrew after F3', async () => {
-    const { fake, client } = await connected();
-    expect(await client.heatToLater(600, 212)).toBe(Mode.BOIL);
-    expect(await client.heatToLater(600, 170)).toBe(Mode.MY_BREW);
-    expect(fake.sent.map((f) => f.payload[1])).toEqual([Cmd.DELAYED_START, Cmd.SET_MY_TEMP, Cmd.DELAYED_START]);
-  });
-
   it('emits completion notifications', async () => {
     const { fake, client } = await connected();
     const onCompletion = vi.fn();

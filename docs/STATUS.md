@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-09-25 (about 01:00, US Central)._
+_Last updated: 2026-09-25 (afternoon, US Central)._
 
 ## Checkpoints
 
@@ -9,7 +9,7 @@ _Last updated: 2026-09-25 (about 01:00, US Central)._
 | A — probe against the real kettle (read-only) | ✅ done | scan, info (HW 1.0.00 / SW R0007V0012 → V1), key from the app's `.pklg`, hello accepted, status/watch, lift off base / put back |
 | Connectivity soak (15 min, idle, kettle and Pi in their normal spots) | ✅ 156/156 polls, 0 drops | The first connect took 38 s; connects take 10–40 s from the normal spot vs about 2 s up close |
 | B — documented writes from the plugin | 🟡 partial | F1 delayed start 5 min, then F4 cancel, verified live (stage 5, countdown). F0 hold byte order confirmed LE **from the app capture**, not yet sent by the plugin. Boil (F0) was sent via HomeKit and the kettle started heating |
-| C — HomeKit on the Pi | 🟡 in progress | Child bridge "Kettle Bridge" paired in the Home app. Boil via HomeKit worked; on 2026-09-25 a MyBrew heat, hold and off via the dial worked too. The link drops (0x08 supervision timeouts) on the onboard radio and, less badly, on a USB adapter; it now recovers by itself (see Open issue 1) |
+| C — HomeKit on the Pi | 🟡 in progress | Child bridge "Kettle Bridge" paired in the Home app. Boil via HomeKit worked; on 2026-09-25 a MyBrew heat, hold and off via the dial worked too, and a Home app automation (made by Siri) turned on Green Tea at 07:20 on time, with the 30 min keep-warm after it. The link drops (0x08 supervision timeouts) on the onboard radio and, less badly, on a USB adapter; it now recovers by itself (see Open issue 1) |
 
 ## Deployed on the Pi
 
@@ -35,7 +35,14 @@ _Last updated: 2026-09-25 (about 01:00, US Central)._
    3. **Fix slow reconnects** if they recur (the 60 s case was a GATT discovery timeout after a connect). Cancelling the BlueZ connect properly belongs to the `node-ble` replacement (FUTURE-WORK §3b).
    4. **Decide from the numbers:** if drops stay invisible in HomeKit, accept them and document it for users. If they cause visible failures, run the diagnostic below and consider an adapter with an external antenna.
    - **Optional diagnostic, only if step 4 needs it:** put the kettle next to the adapter for about 30 min (idle, no heating needed). Drops continue up close → kettle-side or interference, and no adapter or antenna will help. Drops stop → signal margin, and a USB Bluetooth adapter with an external antenna (about $15–20) could help at 10 ft.
-   - btmon keeps capturing in the container (`/tmp/kettle-hci.btsnoop`). The capture spans reconnects, so it contains hello frames with the key: print only events and kettle notifications.
+   - btmon is not running (stopped 2026-09-25). For reason codes, start it again (`docs/local/argonpi.md`). A capture spans reconnects, so it contains hello frames with the key: print only events and kettle notifications.
+
+   **Step 2 results, 2026-09-25 (from the container log; the maintainer was away from about 08:00):**
+   - **Night, 00:49–07:14, idle:** 5 drops (03:38, 03:44, 05:00, 06:50, 06:53), each back in 3.5–4.5 s on the first attempt. Invisible in HomeKit.
+   - **The 07:20 automation worked:** Green Tea started on time, heating finished at 07:23 and keep-warm at 07:53.
+   - **Day, 07:20–13:40:** 9–19 drops an hour (07: 15, 08: 17, 09: 19, 10: 9, 11: 9, 12: 11, 13: 18), and **18 outages of a minute or more**: the longest 33 min (09:44–10:17), 28 min (to 11:47), 18 min (to 13:10), 14 min (to 10:52) and 9 min (13:31–13:40). Reconnect attempts failed with `le-connection-abort-by-local` (50 warnings) and 7 GATT service discovery timeouts (30 s). Connected again from 13:40 (still up at 14:04).
+   - **Restarts not caused by the plugin:** a full Homebridge restart at 07:14 (SIGTERM) and a container restart at about 07:58. The cause is unknown (to ask).
+   - **Step 4 verdict: visible failures.** Outages of 10–30 min mean No Response in HomeKit, and a tap or automation during one is refused. Next: the diagnostic (kettle next to the adapter for 30 min) when the maintainer is home, then an adapter with an external antenna if it's the margin. Open question: why nights are quiet and days are not. Candidates: daytime 2.4 GHz traffic, the kettle's position after it was lifted to pour at about 07:25, or the adapter's state after the 07:14 and 07:58 restarts. Tonight's drop rate (nothing touched) separates the first from the other two.
 
    History (onboard radio): At 21:36:39 local, Boil was sent via HomeKit. At 21:36:52 the link was lost. After that, every reconnect failed with "BLE connect timed out" or "not found while scanning", and a host `bluetoothctl` LE scan heard 22 devices but not the kettle. That looked like the kettle wasn't advertising, but later tests (22:06–22:48) showed a Mac next to the Pi hearing it advertise strongly while the Pi heard nothing. The user says VeSync was *not* reopened, so an app takeover is less likely (but iOS background reconnects are still possible). Hypotheses to test, in order:
    1. Something else holds the connection: the iPhone's VeSync (background), or another phone or tablet. Test: turn Bluetooth off on the phones, then scan. **Done 2026-09-23: no change, so very unlikely.**
@@ -53,5 +60,5 @@ _Last updated: 2026-09-25 (about 01:00, US Central)._
 ## Next steps
 
 1. Open issue 1: follow its plan (reconnect logging deployed 2026-09-24; measure drops and their HomeKit impact during normal use, then decide).
-2. Finish the Checkpoint C list. Done 2026-09-25: heat and off via the dial (including retargeting while heating) and Keep Warm holding after the heat finished. Still to do: a preset switch, Delay Start on and off, and On Base.
+2. Finish the Checkpoint C list. Done 2026-09-25: heat and off via the dial (including retargeting while heating), Keep Warm holding after the heat finished, and a preset switch (Green Tea, from a Home app automation). Still to do: On Base. The Delay Start switch was removed instead of tested (FUTURE-WORK §2).
 3. Replace `node-ble` (FUTURE-WORK §3b, agreed).

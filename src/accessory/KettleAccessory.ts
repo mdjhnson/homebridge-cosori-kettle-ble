@@ -3,7 +3,7 @@
  *
  *  - Thermostat (primary): current / target temperature, heat on/off
  *  - Occupancy sensor "On Base" (optional)
- *  - Switches: the user's temperature switches (default: the kettle presets), Keep Warm, Delay Start
+ *  - Switches: the user's temperature switches (default: the kettle presets), Keep Warm
  *
  * GET handlers answer from cached state (or "No Response" when it is stale). SET handlers validate,
  * update the tile optimistically and run the kettle command in the background: a BLE connection can
@@ -44,7 +44,6 @@ export class KettleAccessory {
   private readonly thermostat: Service;
   private readonly onBase?: Service;
   private readonly keepWarm?: Service;
-  private readonly delayStart?: Service;
   private readonly temperatureSwitches: { item: TemperatureSwitch; service: Service }[] = [];
   private readonly smoother = new TemperatureSmoother();
   private readonly ctx: KettleContext;
@@ -141,11 +140,11 @@ export class KettleAccessory {
       .onGet(() => this.read((s) => this.keepWarmOn(s)))
       .onSet((v) => this.setKeepWarm(Boolean(v)));
 
-    // --- Delay start ---------------------------------------------------------------------------
-    this.delayStart = this.optionalService(config.accessories.delayStartSwitch, S.Switch, 'delay-start', 'Delay Start');
-    this.delayStart?.getCharacteristic(C.On)
-      .onGet(() => this.read((s) => s.scheduled))
-      .onSet((v) => this.setDelayStart(Boolean(v)));
+    // The Delay Start switch was removed (a Home app automation or Siri picks a time of day): drop its tile.
+    const delayStart = accessory.getServiceById(S.Switch, 'delay-start');
+    if (delayStart) {
+      accessory.removeService(delayStart);
+    }
 
     manager.on('status', (s) => this.push(s));
     manager.on('connection', (connected) => {
@@ -262,18 +261,6 @@ export class KettleAccessory {
     }
   }
 
-  private setDelayStart(on: boolean): void {
-    this.assertCanCommand();
-    if (!on) {
-      this.exec('cancel delay start', (c) => c.stop(), () => !!this.manager.status?.scheduled);
-      return;
-    }
-    this.assertOnBase();
-    const targetF = this.ctx.targetF ?? this.manager.status?.setpointF ?? PRESET_TEMP_F[Mode.BOIL]!;
-    const delaySeconds = this.config.delayStartMinutes * 60;
-    this.exec(`delay start ${targetF}°F in ${this.config.delayStartMinutes} min`, (c) => c.heatToLater(delaySeconds, targetF, this.holdSeconds()));
-  }
-
   /** Run a command in the background; log and re-sync on failure. */
   private exec(label: string, fn: (c: KettleClient) => Promise<unknown>, onlyIf?: () => boolean): void {
     if (onlyIf && !onlyIf()) {
@@ -318,7 +305,6 @@ export class KettleAccessory {
       service.updateCharacteristic(C.On, this.switchOn(item, s));
     }
     this.keepWarm?.updateCharacteristic(C.On, this.keepWarmOn(s));
-    this.delayStart?.updateCharacteristic(C.On, s.scheduled);
   }
 
   private updateInfo(): void {
