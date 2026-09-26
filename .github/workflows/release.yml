@@ -1,0 +1,111 @@
+name: Release
+
+# Publishing a GitHub release stages that version on npm through trusted publishing (OIDC, no token).
+# It goes live only after a maintainer approves it with 2FA: `npm stage approve <stage-id>`, or the
+# Staged Packages tab on npmjs.com. See docs/RELEASING.md.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dist_tag: ${{ steps.version.outputs.dist_tag }}
+      published: ${{ steps.version.outputs.published }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the tag and pick the dist-tag
+        id: version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$TAG_NAME" != "v$version" ]; then
+            echo "::error::Release tag $TAG_NAME does not match package.json version $version (expected v$version)"
+            exit 1
+          fi
+          case "$version" in
+            *-*) dist_tag=next ;;
+            *) dist_tag=latest ;;
+          esac
+          if [ "$dist_tag" = next ] && [ "$PRERELEASE" != true ]; then
+            echo "::error::$version is a pre-release version: tick \"Set as a pre-release\" on the GitHub release"
+            exit 1
+          fi
+          if [ "$dist_tag" = latest ] && [ "$PRERELEASE" = true ]; then
+            echo "::error::$version is a stable version, but the GitHub release is marked as a pre-release"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+          # The first version is published by hand (a trusted publisher needs the package to exist), and a
+          # re-run must not fail on a version that is already live.
+          if npm view "homebridge-cosori-kettle-ble@$version" version >/dev/null 2>&1; then
+            echo "::notice::homebridge-cosori-kettle-ble@$version is already on npm; nothing to stage"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  stage:
+    needs: check
+    if: needs.check.outputs.published != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Use npm 11 (trusted publishing needs 11.5.1 or later)
+        run: npm install -g npm@11
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check (src + tests)
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Show the package contents
+        run: npm pack --dry-run --ignore-scripts
+
+      - name: Stage on npm
+        # --ignore-scripts: publish the build that was just tested, without rebuilding it.
+        run: npm stage publish --tag "${{ needs.check.outputs.dist_tag }}" --ignore-scripts
+
+      - name: Summary
+        run: |
+          {
+            echo "Staged homebridge-cosori-kettle-ble@${{ needs.check.outputs.version }} (dist-tag \`${{ needs.check.outputs.dist_tag }}\`)."
+            echo
+            echo "Approve it with 2FA: \`npm stage list homebridge-cosori-kettle-ble\`, then \`npm stage approve <stage-id>\`,"
+            echo "or on npmjs.com under the package's Staged Packages tab."
+          } >> "$GITHUB_STEP_SUMMARY"

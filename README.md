@@ -2,7 +2,7 @@
 
 Control a **Cosori Smart Gooseneck Electric Kettle** (0.8 L, Bluetooth — normally used with the VeSync app) from Apple HomeKit via [Homebridge](https://homebridge.io), talking to the kettle directly over Bluetooth LE.
 
-> **Status: pre-release.** The protocol library and the `cosori-probe` CLI have been validated on a real kettle (HW 1.0.00 / SW R0007V0012). The HomeKit layer is tested against a simulated kettle and runs daily on the maintainer's Raspberry Pi 4; the remaining real-hardware HomeKit checks are in progress. Not published to npm.
+> **Status: pre-release.** The protocol library and the `cosori-probe` CLI have been validated on a real kettle (HW 1.0.00 / SW R0007V0012). The HomeKit layer is tested against a simulated kettle and runs daily on the maintainer's Raspberry Pi 4; the remaining real-hardware HomeKit checks are in progress. Pre-releases are published to npm under the `next` tag.
 
 - BLE via [node-ble](https://github.com/chrvadala/node-ble) (BlueZ over D-Bus): **no privileged container, no capabilities, no `/dev` passthrough, no native modules**.
 - Works in the official `homebridge/homebridge` Docker image with host networking and the host D-Bus socket mounted.
@@ -131,23 +131,30 @@ docker exec homebridge ls -l /run/dbus-host/system_bus_socket
 
 ## Install (pre-release)
 
-Until the package is published, install it from a tarball into the container's Homebridge directory.
+Install the latest pre-release from npm into the container's Homebridge directory, then restart the plugin's child bridge (or Homebridge):
 
-On your development machine:
+```sh
+docker exec homebridge npm install --prefix /homebridge homebridge-cosori-kettle-ble@next
+docker exec homebridge cosori-probe help
+```
+
+Once it's installed, the Homebridge UI shows the plugin and its settings like any other.
+
+**From source** (to test a branch before it's released), build a tarball on your development machine:
 
 ```sh
 git clone https://github.com/mdjhnson/homebridge-cosori-kettle-ble.git
 cd homebridge-cosori-kettle-ble
 npm install
-npm pack                                  # → homebridge-cosori-kettle-ble-0.1.0.tgz
-scp homebridge-cosori-kettle-ble-0.1.0.tgz your-pi:/tmp/
+npm pack                                  # → homebridge-cosori-kettle-ble-<version>.tgz, e.g. 0.2.0-beta.1
+scp homebridge-cosori-kettle-ble-0.2.0-beta.1.tgz your-pi:/tmp/
 ```
 
 On the Pi:
 
 ```sh
-docker cp /tmp/homebridge-cosori-kettle-ble-0.1.0.tgz homebridge:/homebridge/
-docker exec homebridge npm install --prefix /homebridge /homebridge/homebridge-cosori-kettle-ble-0.1.0.tgz
+docker cp /tmp/homebridge-cosori-kettle-ble-0.2.0-beta.1.tgz homebridge:/homebridge/
+docker exec homebridge npm install --prefix /homebridge /homebridge/homebridge-cosori-kettle-ble-0.2.0-beta.1.tgz
 docker exec homebridge cosori-probe help
 ```
 
@@ -389,7 +396,7 @@ npm test          # protocol + client tests against captured packets, no hardwar
 npm run build
 ```
 
-CI runs lint, type-check, build and tests on Node 22, 24 and 26.
+CI runs lint, type-check, build and tests on Node 22, 24 and 26. Releases are built by GitHub Actions and staged on npm for approval: see [docs/RELEASING.md](docs/RELEASING.md) and the [changelog](CHANGELOG.md).
 
 ## Credits
 

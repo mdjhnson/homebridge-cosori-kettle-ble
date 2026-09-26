@@ -2,15 +2,14 @@
   "name": "homebridge-cosori-kettle-ble",
   "displayName": "Cosori Kettle BLE",
   "type": "module",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0-beta.1",
   "description": "Control a Cosori Smart Gooseneck Electric Kettle from HomeKit over Bluetooth LE (BlueZ / D-Bus).",
   "author": "Matt Johnson",
   "license": "MIT",
   "homepage": "https://github.com/mdjhnson/homebridge-cosori-kettle-ble#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mdjhnson/homebridge-cosori-kettle-ble.git"
+    "url": "git+https://github.com/mdjhnson/homebridge-cosori-kettle-ble.git"
   },
   "bugs": {
     "url": "https://github.com/mdjhnson/homebridge-cosori-kettle-ble/issues"
@@ -31,8 +30,13 @@
     "dist",
     "config.schema.json",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": "^22.10.0 || ^24.0.0 || ^26.0.0",
     "homebridge": "^1.8.0 || ^2.0.0"
