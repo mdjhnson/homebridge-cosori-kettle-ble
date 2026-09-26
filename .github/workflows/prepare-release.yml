@@ -2,8 +2,9 @@ name: Prepare release
 
 # Step 1 of a release (docs/RELEASING.md): Actions → Prepare release → Run workflow.
 # Bumps the version and moves the CHANGELOG "Unreleased" notes under it, on a new branch
-# release/v<version>, then links a ready-made pull request in the run summary. Merging that PR runs
-# release.yml, which stages the package on npm and creates the tag and the GitHub release.
+# release/v<version>, then links a ready-made pull request in the run summary. Once that PR is merged,
+# publishing the GitHub release (a pre-filled link in the summary and in the PR) runs release.yml,
+# which stages the package on npm.
 #
 # The workflow only pushes a branch: main accepts changes through pull requests only, and the PR is
 # opened by the maintainer so that CI runs on it as usual.
@@ -150,23 +151,33 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ "$DRY_RUN" = true ]; then
-            echo "Dry run: nothing was pushed." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "**Dry run: nothing was pushed**, so the links below don't work yet." >> "$GITHUB_STEP_SUMMARY"
           fi
-          url=$(node -e '
-            const v = process.env.VERSION;
-            const body = [
-              `Version bump for \`${v}\`, prepared by the Prepare release workflow.`,
-              "",
-              "Merging this runs `release.yml`: it stages the package on npm and creates the tag and the GitHub release.",
-              "Then approve the staged version on npmjs.com (the package, Staged Packages tab).",
-            ].join("\n");
-            const q = new URLSearchParams({ expand: "1", title: `Release ${v}`, body });
-            console.log(`${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/compare/main...release/v${v}?${q}`);
-          ')
-          {
-            echo "## Next: open the pull request"
-            echo
-            echo "**[Open the pull request for $VERSION]($url)**, click *Create pull request*, and merge it once CI passes."
-            echo "Merging it runs the Release workflow. Then approve the staged version on npmjs.com (the package, *Staged Packages* tab)."
-          } >> "$GITHUB_STEP_SUMMARY"
+          # This version's CHANGELOG section (written above) is the release notes.
+          awk -v v="$VERSION" '/^## /{p=($2==v)} p' CHANGELOG.md | sed 1d > "$RUNNER_TEMP/notes.md"
+          node - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          const { readFileSync } = require('node:fs');
+          const { VERSION: v, GITHUB_SERVER_URL: server, GITHUB_REPOSITORY: repo, RUNNER_TEMP } = process.env;
+          const notes = readFileSync(`${RUNNER_TEMP}/notes.md`, 'utf8').trim();
+          // GitHub fills in the new-release form from these query parameters.
+          const release = new URLSearchParams({ tag: `v${v}`, target: 'main', title: v, body: notes });
+          if (v.includes('-')) {
+            release.set('prerelease', '1');
+          }
+          const releaseUrl = `${server}/${repo}/releases/new?${release}`;
+          const body = [
+            `Version bump for \`${v}\`, prepared by the Prepare release workflow.`,
+            '',
+            `After merging: **[publish the GitHub release](${releaseUrl})** (pre-filled; just click *Publish release*).`,
+            'That runs `release.yml`, which stages the package on npm. Then approve it on npmjs.com (the package, Staged Packages tab).',
+          ].join('\n');
+          const pr = new URLSearchParams({ expand: '1', title: `Release ${v}`, body });
+          const prUrl = `${server}/${repo}/compare/main...release/v${v}?${pr}`;
+          console.log([
+            '## Next steps',
+            '',
+            `1. **[Open the pull request for ${v}](${prUrl})**, click *Create pull request*, and merge it once CI passes.`,
+            `2. **[Publish the GitHub release](${releaseUrl})** (pre-filled${v.includes('-') ? ', marked as a pre-release' : ''}): click *Publish release*. This link is in the PR too.`,
+            '3. That runs the Release workflow, which stages the package on npm. **Approve it** on npmjs.com: the package, *Staged Packages* tab.',
+          ].join('\n'));
+          EOF
