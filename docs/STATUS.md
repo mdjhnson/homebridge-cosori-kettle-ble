@@ -1,9 +1,11 @@
 # Status
 
-_Last updated: 2026-09-26 (afternoon, US Central)._
+_Last updated: 2026-09-26 (late afternoon, US Central)._
 
 ## Released
 
+- **`0.3.0-beta.2` is on npm** (2026-09-26, from `main` at `4529ec8`; staged by `release.yml` from the GitHub release `v0.3.0-beta.2`, approved with 2FA), with `latest` and `next` both on it (`latest` moved by hand, the last time: see below). It resends a command that a dropped link cut off and runs commands in issue order (PR #15).
+- **Releases now start from a button** (PR #17, 2026-09-26): Actions → Prepare release → Run workflow, then merge the release PR it links, then approve on npmjs.com. While npm has no stable version, betas are staged under `latest`, so the manual `npm dist-tag` step is gone. A dry run on GitHub worked; the first real run will be the next release. See `docs/RELEASING.md`.
 - **`0.3.0-beta.1` is on npm** (2026-09-25, from `main` at `697d61b`; staged by `release.yml`, approved with 2FA), with `latest` and `next` both on it. It replaces `node-ble` with the built-in BlueZ client (PR #11): `npm audit --omit=dev` 0, no `usocket` `gyp ERR!`. GitHub release `v0.3.0-beta.1`.
 - **`0.2.0-beta.1` is on npm** (published 2026-09-25 from `main` at `57ae33b`), under `next`. npm also pointed `latest` at it, as it does for a package's first version. `latest` doesn't move with later pre-releases, so until the first stable version each beta needs `npm dist-tag add … latest` after approval (`docs/RELEASING.md`, "Each release" step 5). Otherwise plain installs and the Homebridge UI stay on beta.1. The GitHub release `v0.2.0-beta.1` holds the notes.
 - The one-time setup in `docs/RELEASING.md` is done: first publish by hand, trusted publisher for `release.yml` with staged publishing only, and publishing access set to "require 2FA and disallow tokens". Every later version goes through "Each release" there: a version-bump PR, a GitHub release, then `npm stage approve` with 2FA.
@@ -19,7 +21,8 @@ _Last updated: 2026-09-26 (afternoon, US Central)._
 
 ## Deployed on the Pi
 
-- **Branch build of PR #15 (`fix/resend-after-drop`) at `41c362d`**, installed 2026-09-26 15:06 from a tarball still labelled `0.3.0-beta.1` (so `/homebridge/package.json` points at the tarball; reinstall from npm after the next release). It resends a command that a drop cut off, and runs commands in issue order. Before it, the PR's earlier commits ran: `289128f` from 08:03 and `ab39db9` from 08:19 (which had the scene bug fixed in `41c362d`). Config backed up each time (`config.json.bak-before-resend-20260926-080303`, `…-resend2-20260926-081908`, `…-resend3-20260926-150604`), and only the Kettle child bridge was restarted: connected in 4.3 s, 1.8 s and 2.1 s.
+- **`0.3.0-beta.2` from npm**, installed 2026-09-26 16:24 by the maintainer (replacing the PR #15 branch tarball; `/homebridge/package.json` has `^0.3.0-beta.2` again). Only the Kettle child bridge was restarted: it reported plugin v0.3.0-beta.2 and connected in 2.0 s. No backup right before it (the newest is `config.json.bak-before-resend3-20260926-150604`; the config hasn't changed since).
+- Before that: **Branch build of PR #15 (`fix/resend-after-drop`) at `41c362d`**, installed 2026-09-26 15:06 from a tarball still labelled `0.3.0-beta.1` (so `/homebridge/package.json` points at the tarball; reinstall from npm after the next release). It resends a command that a drop cut off, and runs commands in issue order. Before it, the PR's earlier commits ran: `289128f` from 08:03 and `ab39db9` from 08:19 (which had the scene bug fixed in `41c362d`). Config backed up each time (`config.json.bak-before-resend-20260926-080303`, `…-resend2-20260926-081908`, `…-resend3-20260926-150604`), and only the Kettle child bridge was restarted: connected in 4.3 s, 1.8 s and 2.1 s.
 - Before that: **`0.3.0-beta.1` from npm**, installed 2026-09-25 23:42 (replacing the PR #11 branch tarball; `/homebridge/package.json` had `^0.3.0-beta.1` until the PR #15 tarball, old tarballs removed). Config backed up first (`config.json.bak-before-npm-0.3.0-beta.1-20260925-234240`). Only the Kettle child bridge was restarted: it reported plugin v0.3.0-beta.1 and connected in 2.1 s.
 - Before that: **branch build of PR #11 (`feat/bluez-transport`, node-ble replaced), `580f604`**, installed 2026-09-25 23:29 from a tarball labelled `0.2.0-beta.1`. Before it, the first commit `07a272a` ran from 22:51. Config backed up each time (`config.json.bak-before-bluez-20260925-225044`, `…-bluez2-20260925-232858`), and only the Kettle child bridge was restarted.
   - The install was clean, with no `gyp ERR!`, and `node-ble` and `dbus-next` are gone. `cosori-probe adapters` and `scan` work.
@@ -100,4 +103,4 @@ _Last updated: 2026-09-26 (afternoon, US Central)._
 3. ~~Install `0.2.0-beta.1` on the Pi from npm.~~ **Done 2026-09-25 22:10** (see "Deployed on the Pi"). Still to check: that the Delay Start tile is gone from the Home app.
 4. ~~Replace `node-ble` (FUTURE-WORK §3b).~~ **Done:** PR #11, released as `0.3.0-beta.1`; ran on the Pi from npm from 2026-09-25 23:42 until the PR #15 build (2026-09-26 08:03).
 5. Open issue 7: find out why one Home app tap arrives as several SET requests.
-6. Merge PR #15 (resend after a drop), release it, and reinstall on the Pi from npm (the Pi runs a tarball; see "Deployed on the Pi").
+6. ~~Merge PR #15 (resend after a drop), release it, and reinstall on the Pi from npm.~~ **Done 2026-09-26:** released as `0.3.0-beta.2`, on the Pi from npm since 16:24.
