@@ -1,7 +1,7 @@
 import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from 'homebridge';
 
 import { KettleAccessory } from './accessory/KettleAccessory.js';
-import { NodeBleTransport } from './ble/NodeBleTransport.js';
+import { BluezTransport } from './ble/BluezTransport.js';
 import { parseConfig, type KettlePluginConfig } from './config.js';
 import { ConnectionManager } from './kettle/ConnectionManager.js';
 import { KettleClient } from './kettle/KettleClient.js';
@@ -74,7 +74,7 @@ export class CosoriKettlePlatform implements DynamicPlatformPlugin {
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
     }
 
-    const transport = new NodeBleTransport(config.mac, { dbusAddress: config.dbusAddress, adapter: config.adapter, log: this.log });
+    const transport = new BluezTransport(config.mac, { dbusAddress: config.dbusAddress, adapter: config.adapter, log: this.log });
     const client = new KettleClient(transport, {
       protocolVersion: config.protocolVersion === 'auto' ? 'auto' : config.protocolVersion === 0 ? ProtocolVersion.V0 : ProtocolVersion.V1,
       log: this.log,

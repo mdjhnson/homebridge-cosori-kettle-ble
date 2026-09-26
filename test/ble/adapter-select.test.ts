@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { AdapterNotFoundError, type AdapterSource, formatAdapters, isAdapterAddress, selectAdapter } from '../../src/ble/NodeBleTransport.js';
+import { AdapterNotFoundError, type AdapterSource, formatAdapters, isAdapterAddress, selectAdapter } from '../../src/ble/bluez.js';
 
 interface FakeAdapter {
   name: string;
   getAddress(): Promise<string>;
 }
 
-/** Stand-in for node-ble's Bluetooth object: adapters in BlueZ order, with their controller addresses. */
+/** Stand-in for BlueZ's adapter list: adapters in BlueZ order, with their controller addresses. */
 function source(adapters: Record<string, string | Error>): AdapterSource<FakeAdapter> {
   return {
     adapters: async () => Object.keys(adapters),

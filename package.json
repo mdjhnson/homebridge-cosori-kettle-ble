@@ -50,9 +50,6 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run lint && npm run build && npm test"
   },
-  "dependencies": {
-    "node-ble": "~1.13.0"
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@homebridge/hap-nodejs": "^2.2.2",
@@ -63,5 +60,8 @@
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "@homebridge/dbus-native": "0.7.9"
   }
 }
