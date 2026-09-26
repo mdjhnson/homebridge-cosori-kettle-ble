@@ -1,0 +1,172 @@
+name: Prepare release
+
+# Step 1 of a release (docs/RELEASING.md): Actions → Prepare release → Run workflow.
+# Bumps the version and moves the CHANGELOG "Unreleased" notes under it, on a new branch
+# release/v<version>, then links a ready-made pull request in the run summary. Merging that PR runs
+# release.yml, which stages the package on npm and creates the tag and the GitHub release.
+#
+# The workflow only pushes a branch: main accepts changes through pull requests only, and the PR is
+# opened by the maintainer so that CI runs on it as usual.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.4.0-beta.1 or 1.0.0. Leave empty for the next beta (0.3.0-beta.2 → 0.3.0-beta.3).'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run: show the changes without pushing a branch'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # push the release branch; generate release notes
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0 # tags, for the release notes
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Pick the version
+        id: version
+        env:
+          INPUT: ${{ inputs.version }}
+        run: |
+          current=$(node -p "require('./package.json').version")
+          if [ -n "$INPUT" ]; then
+            npm version "${INPUT#v}" --no-git-tag-version --allow-same-version >/dev/null
+          else
+            case "$current" in
+              *-*) npm version prerelease --preid beta --no-git-tag-version >/dev/null ;;
+              *) echo "::error::$current is a stable version: type the next version (e.g. 0.4.0-beta.1 or 1.0.1)"; exit 1 ;;
+            esac
+          fi
+          version=$(node -p "require('./package.json').version")
+          if [ "$version" = "$current" ]; then
+            echo "::error::$version is already the version on main"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists"
+            exit 1
+          fi
+          if git ls-remote --exit-code --heads origin "release/v$version" >/dev/null; then
+            echo "::error::Branch release/v$version already exists: merge or delete it first"
+            exit 1
+          fi
+          if npm view "homebridge-cosori-kettle-ble@$version" version >/dev/null 2>&1; then
+            echo "::error::homebridge-cosori-kettle-ble@$version is already on npm"
+            exit 1
+          fi
+          echo "Releasing $version (main has $current)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=v$current" >> "$GITHUB_OUTPUT"
+
+      - name: Write the CHANGELOG section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          # The notes under "## Unreleased" become the new version's section. With none, GitHub's
+          # generated notes (the merged pull requests since the previous tag) are used instead.
+          prev_args=()
+          if git rev-parse -q --verify "refs/tags/$PREVIOUS_TAG" >/dev/null; then
+            prev_args=(-f "previous_tag_name=$PREVIOUS_TAG")
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f "tag_name=v$VERSION" -f target_commitish=main "${prev_args[@]}" \
+            --jq .body > "$RUNNER_TEMP/generated.md"
+          node --input-type=module - <<'EOF'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const { VERSION, RUNNER_TEMP } = process.env;
+          const date = new Date().toISOString().slice(0, 10);
+          const text = readFileSync('CHANGELOG.md', 'utf8');
+          const heading = /^## Unreleased[^\n]*\n/m;
+          const match = heading.exec(text);
+          let before, notes, after;
+          if (match) {
+            const start = match.index + match[0].length;
+            const next = text.slice(start).search(/^## /m);
+            const end = next === -1 ? text.length : start + next;
+            before = text.slice(0, match.index);
+            notes = text.slice(start, end).trim();
+            after = text.slice(end);
+          } else {
+            const first = text.search(/^## /m);
+            before = first === -1 ? text : text.slice(0, first);
+            notes = '';
+            after = first === -1 ? '' : text.slice(first);
+          }
+          if (!notes) {
+            const generated = readFileSync(`${RUNNER_TEMP}/generated.md`, 'utf8').trim();
+            notes = generated || '- Maintenance release.';
+            console.log('No notes under "## Unreleased": using the generated notes.');
+          }
+          const section = `## ${VERSION} (${date})\n\n${notes}\n\n`;
+          writeFileSync('CHANGELOG.md', `${before.trimEnd()}\n\n## Unreleased\n\n${section}${after.trimStart()}`);
+          EOF
+          {
+            echo "### Changes"
+            echo '```diff'
+            git diff -- package.json CHANGELOG.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          git diff --stat
+
+      - name: Commit and push release/v${{ steps.version.outputs.version }}
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ACTOR: ${{ github.actor }}
+          ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          # Author the commit as the maintainer who clicked Run workflow; the bot is the committer.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "release/v$VERSION"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -q --author="$ACTOR <$ACTOR_ID+$ACTOR@users.noreply.github.com>" -m "Release $VERSION"
+          git push -q origin "release/v$VERSION"
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run: nothing was pushed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          url=$(node -e '
+            const v = process.env.VERSION;
+            const body = [
+              `Version bump for \`${v}\`, prepared by the Prepare release workflow.`,
+              "",
+              "Merging this runs `release.yml`: it stages the package on npm and creates the tag and the GitHub release.",
+              "Then approve the staged version on npmjs.com (the package, Staged Packages tab).",
+            ].join("\n");
+            const q = new URLSearchParams({ expand: "1", title: `Release ${v}`, body });
+            console.log(`${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/compare/main...release/v${v}?${q}`);
+          ')
+          {
+            echo "## Next: open the pull request"
+            echo
+            echo "**[Open the pull request for $VERSION]($url)**, click *Create pull request*, and merge it once CI passes."
+            echo "Merging it runs the Release workflow. Then approve the staged version on npmjs.com (the package, *Staged Packages* tab)."
+          } >> "$GITHUB_STEP_SUMMARY"

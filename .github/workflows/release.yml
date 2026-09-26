@@ -1,12 +1,22 @@
 name: Release
 
-# Publishing a GitHub release stages that version on npm through trusted publishing (OIDC, no token).
-# It goes live only after a maintainer approves it with 2FA: `npm stage approve <stage-id>`, or the
-# Staged Packages tab on npmjs.com. See docs/RELEASING.md.
+# Stages a version on npm through trusted publishing (OIDC, no token). It goes live only after a
+# maintainer approves it with 2FA: the Staged Packages tab on npmjs.com, or `npm stage approve
+# <stage-id>`. See docs/RELEASING.md.
+#
+# Runs when:
+# - a release PR from "Prepare release" is merged (a push to main that changes package.json to a
+#   version with no tag yet). It stages the package, then creates the tag and the GitHub release;
+# - a GitHub release is published by hand (the older route). The tag must match package.json;
+# - by hand (Run workflow), to retry a release of the version on main.
 
 on:
+  push:
+    branches: [main]
+    paths: [package.json]
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,37 +32,64 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       dist_tag: ${{ steps.version.outputs.dist_tag }}
       published: ${{ steps.version.outputs.published }}
+      create_release: ${{ steps.version.outputs.create_release }}
+      skip: ${{ steps.version.outputs.skip }}
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # tags
 
-      - name: Check the tag and pick the dist-tag
+      - name: Check the version and pick the dist-tag
         id: version
         env:
+          EVENT: ${{ github.event_name }}
           TAG_NAME: ${{ github.event.release.tag_name }}
           PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           version=$(node -p "require('./package.json').version")
-          if [ "$TAG_NAME" != "v$version" ]; then
-            echo "::error::Release tag $TAG_NAME does not match package.json version $version (expected v$version)"
-            exit 1
-          fi
-          case "$version" in
-            *-*) dist_tag=next ;;
-            *) dist_tag=latest ;;
-          esac
-          if [ "$dist_tag" = next ] && [ "$PRERELEASE" != true ]; then
-            echo "::error::$version is a pre-release version: tick \"Set as a pre-release\" on the GitHub release"
-            exit 1
-          fi
-          if [ "$dist_tag" = latest ] && [ "$PRERELEASE" = true ]; then
-            echo "::error::$version is a stable version, but the GitHub release is marked as a pre-release"
-            exit 1
-          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+
+          if [ "$EVENT" = release ]; then
+            if [ "$TAG_NAME" != "v$version" ]; then
+              echo "::error::Release tag $TAG_NAME does not match package.json version $version (expected v$version)"
+              exit 1
+            fi
+            if [ "$prerelease" = true ] && [ "$PRERELEASE" != true ]; then
+              echo "::error::$version is a pre-release version: tick \"Set as a pre-release\" on the GitHub release"
+              exit 1
+            fi
+            if [ "$prerelease" = false ] && [ "$PRERELEASE" = true ]; then
+              echo "::error::$version is a stable version, but the GitHub release is marked as a pre-release"
+              exit 1
+            fi
+          elif git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            # A push that changed package.json without changing the version (a dependency update).
+            echo "::notice::v$version is already tagged; nothing to release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            echo "create_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Stable versions go to `latest`. Pre-releases go to `next`, except while npm has no stable
+          # version yet: then `latest` would otherwise stay on an old beta, so they go to `latest` too.
+          if [ "$prerelease" = false ]; then
+            dist_tag=latest
+          elif npm view homebridge-cosori-kettle-ble versions --json 2>/dev/null \
+              | node -e 'const v = JSON.parse(require("fs").readFileSync(0, "utf8") || "[]"); process.exit([].concat(v).some((x) => !x.includes("-")) ? 0 : 1)'; then
+            dist_tag=next
+          else
+            dist_tag=latest
+          fi
           echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
-          # The first version is published by hand (a trusted publisher needs the package to exist), and a
-          # re-run must not fail on a version that is already live.
+
+          # The first version was published by hand (a trusted publisher needs the package to exist),
+          # and a re-run must not fail on a version that is already live.
           if npm view "homebridge-cosori-kettle-ble@$version" version >/dev/null 2>&1; then
             echo "::notice::homebridge-cosori-kettle-ble@$version is already on npm; nothing to stage"
             echo "published=true" >> "$GITHUB_OUTPUT"
@@ -60,7 +97,7 @@ jobs:
 
   stage:
     needs: check
-    if: needs.check.outputs.published != 'true'
+    if: needs.check.outputs.skip != 'true' && needs.check.outputs.published != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -106,6 +143,35 @@ jobs:
           {
             echo "Staged homebridge-cosori-kettle-ble@${{ needs.check.outputs.version }} (dist-tag \`${{ needs.check.outputs.dist_tag }}\`)."
             echo
-            echo "Approve it with 2FA: \`npm stage list homebridge-cosori-kettle-ble\`, then \`npm stage approve <stage-id>\`,"
-            echo "or on npmjs.com under the package's Staged Packages tab."
+            echo "**Approve it with 2FA** on npmjs.com: the package, *Staged Packages* tab."
+            echo "Or in a terminal: \`npm stage list homebridge-cosori-kettle-ble\`, then \`npm stage approve <stage-id>\`."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  github-release:
+    # After staging, so a failed stage leaves no tag. Created with the workflow's token, which doesn't
+    # trigger other workflows, so this doesn't start the `release` route above a second time.
+    needs: [check, stage]
+    if: >-
+      always() && needs.check.result == 'success' && needs.check.outputs.create_release == 'true'
+      && (needs.stage.result == 'success' || needs.stage.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the release
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create the tag and the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          # This version's CHANGELOG section is the release notes.
+          awk -v v="$VERSION" '/^## /{p=($2==v)} p' CHANGELOG.md | sed 1d > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "See CHANGELOG.md." > "$RUNNER_TEMP/notes.md"
+          fi
+          flags=()
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+          echo "Created the GitHub release [v$VERSION]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v$VERSION)." >> "$GITHUB_STEP_SUMMARY"

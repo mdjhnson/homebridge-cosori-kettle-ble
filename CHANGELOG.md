@@ -2,6 +2,8 @@
 
 All notable changes to this plugin. Versions follow [semver](https://semver.org); while in `0.x`, a minor version may change the config or the Home app tiles.
 
+## Unreleased
+
 ## 0.3.0-beta.2 (2026-09-26)
 
 Published under the `next` dist-tag.
